@@ -18,6 +18,40 @@ public struct CaptionStyler: Sendable {
         words.firstIndex(where: { time >= $0.start && time < $0.end })
     }
 
+    /// A group of words that should be shown together on screen.
+    public struct Phrase: Sendable {
+        public let startIndex: Int  // index into the original words array
+        public let endIndex: Int    // exclusive
+        public var range: Range<Int> { startIndex..<endIndex }
+    }
+
+    /// Group words into phrases for Opus-style karaoke. Each phrase stays on screen
+    /// as a unit while the karaoke highlight moves within it, then jumps to the next.
+    /// Break on: sentence-ending punctuation, long gaps between words, or max word count.
+    public static func groupIntoPhrases(
+        _ words: [TranscriptWord],
+        maxWords: Int = 5,
+        breakOnGapSeconds: Double = 0.4
+    ) -> [Phrase] {
+        guard !words.isEmpty else { return [] }
+        var phrases: [Phrase] = []
+        var start = 0
+        let sentenceEnders: Set<Character> = [".", "?", "!"]
+
+        for i in 0..<words.count {
+            let w = words[i]
+            let count = i - start + 1
+            let nextGap: Double = (i + 1 < words.count) ? words[i + 1].start - w.end : 0
+            let endsSentence = w.word.last.map { sentenceEnders.contains($0) } ?? false
+            let shouldBreak = (count >= maxWords) || endsSentence || (nextGap >= breakOnGapSeconds) || (i == words.count - 1)
+            if shouldBreak {
+                phrases.append(Phrase(startIndex: start, endIndex: i + 1))
+                start = i + 1
+            }
+        }
+        return phrases
+    }
+
     /// Render a styled caption as a CGImage. `wordProgress` (0-1) drives animation curves.
     public static func renderCaption(
         text: String, activeWordIndex: Int?, style: CaptionStyle,

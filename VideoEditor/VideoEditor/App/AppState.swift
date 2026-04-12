@@ -2028,7 +2028,7 @@ final class AppState {
             URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(".env"),
             URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("VideoEditor/.env"),
             // Also check the source project directory (for Xcode builds)
-            URL(fileURLWithPath: "/Users/explicit/Projects/video-editor/VideoEditor/.env"),
+            (FileManager.default.homeDirectoryForCurrentUser).appendingPathComponent("Projects/video-editor/VideoEditor/.env"),
         ].compactMap { $0 }
         for envPath in envPaths {
             if let contents = try? String(contentsOf: envPath, encoding: .utf8) {

@@ -82,22 +82,17 @@ public actor TranscriptionService {
 
         let isLocal = activeProvider.name == "WhisperKit"
 
-        // Step 1: Extract audio from video
+        // Step 1: Extract + re-encode audio to AAC mono 16 kHz @ 48 kbps.
+        // Runs for both video and audio assets — the compact encoding shrinks
+        // upload size for cloud providers and is a no-op accuracy-wise for local
+        // providers (which resample internally anyway).
         let audioExtractor = AudioExtractor()
-        let audioURL: URL
-        if asset.type == .video {
-            onStatus?("Extracting audio from video...")
-            audioURL = try await audioExtractor.extractAudio(from: asset.sourceURL)
-            let next = isLocal ? "Transcribing locally..." : "Uploading to \(activeProvider.name)..."
-            onStatus?("Audio extracted. \(next)")
-        } else {
-            let action = isLocal ? "Preparing local transcription..." : "Uploading audio to \(activeProvider.name)..."
-            onStatus?(action)
-            audioURL = asset.sourceURL
-        }
-        defer {
-            if asset.type == .video { audioExtractor.cleanup(tempURL: audioURL) }
-        }
+        let prepStatus = asset.type == .video ? "Extracting audio from video..." : "Preparing audio..."
+        onStatus?(prepStatus)
+        let audioURL = try await audioExtractor.extractAudio(from: asset.sourceURL)
+        let next = isLocal ? "Transcribing locally..." : "Uploading to \(activeProvider.name)..."
+        onStatus?("Audio ready. \(next)")
+        defer { audioExtractor.cleanup(tempURL: audioURL) }
 
         // Step 2: Transcribe
         onStatus?("Transcribing with \(activeProvider.name)...")

@@ -229,12 +229,22 @@ public final class EffectCompositor: NSObject, AVVideoCompositing, @unchecked Se
                 let wordDuration = activeWord.end - activeWord.start
                 let wordProgress = wordDuration > 0 ? Float((time - activeWord.start) / wordDuration) : 0
 
-                // For hormozi, show only active word; for others, window of ~5
+                // Hormozi = single word. Karaoke = phrase-grouped (stable until phrase ends).
+                // Other styles = sliding window of ~5.
                 let windowStart: Int
                 let windowEnd: Int
                 if captionStyle == .hormozi {
                     windowStart = idx
                     windowEnd = idx + 1
+                } else if captionStyle == .karaoke {
+                    let phrases = CaptionStyler.groupIntoPhrases(allCaptionWords)
+                    if let phrase = phrases.first(where: { $0.range.contains(idx) }) {
+                        windowStart = phrase.startIndex
+                        windowEnd = phrase.endIndex
+                    } else {
+                        windowStart = idx
+                        windowEnd = idx + 1
+                    }
                 } else {
                     windowStart = max(0, idx - 2)
                     windowEnd = min(allCaptionWords.count, idx + 3)

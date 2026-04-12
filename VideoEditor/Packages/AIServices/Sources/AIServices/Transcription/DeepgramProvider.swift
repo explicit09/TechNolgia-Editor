@@ -42,11 +42,9 @@ public final class DeepgramProvider: TranscriptionProvider, @unchecked Sendable 
         if enableDiarization {
             queryItems.append(URLQueryItem(name: "diarize", value: "true"))
         }
-        if let language {
-            queryItems.append(URLQueryItem(name: "language", value: language))
-        } else {
-            queryItems.append(URLQueryItem(name: "detect_language", value: "true"))
-        }
+        // `language=multi` lets Nova-3 handle multilingual input without the
+        // separate language-detection pass that `detect_language=true` triggers.
+        queryItems.append(URLQueryItem(name: "language", value: language ?? "multi"))
 
         var components = URLComponents(string: "https://api.deepgram.com/v1/listen")!
         components.queryItems = queryItems

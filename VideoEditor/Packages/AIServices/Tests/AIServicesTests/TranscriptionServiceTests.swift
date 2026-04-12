@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import AVFoundation
 @testable import AIServices
 @testable import EditorCore
 
@@ -39,9 +40,11 @@ struct TranscriptionServiceTests {
         await service.configure(provider: provider)
 
         let assetName = uniqueAssetName(prefix: "Transcribe Audio")
+        let audioFile = try makeSilentAudioFile()
+        defer { try? FileManager.default.removeItem(at: audioFile) }
         let asset = MediaAsset(
             name: assetName,
-            sourceURL: URL(fileURLWithPath: "/tmp/audio.m4a"),
+            sourceURL: audioFile,
             type: .audio,
             duration: 5
         )
@@ -61,7 +64,8 @@ struct TranscriptionServiceTests {
         #expect(result?.language == "en")
         #expect(await provider.callCount == 1)
         #expect(statusCollector.snapshot() == [
-            "Uploading audio to Mock...",
+            "Preparing audio...",
+            "Audio ready. Uploading to Mock...",
             "Transcribing with Mock...",
             "Processing 1 words...",
         ])
@@ -119,9 +123,11 @@ struct TranscriptionServiceTests {
         await service.configure(provider: provider)
 
         let assetName = uniqueAssetName(prefix: "Concurrent Audio")
+        let audioFile = try makeSilentAudioFile()
+        defer { try? FileManager.default.removeItem(at: audioFile) }
         let asset = MediaAsset(
             name: assetName,
-            sourceURL: URL(fileURLWithPath: "/tmp/audio.m4a"),
+            sourceURL: audioFile,
             type: .audio,
             duration: 5
         )
@@ -155,6 +161,63 @@ struct TranscriptionServiceTests {
 
     private func uniqueAssetName(prefix: String) -> String {
         "\(prefix)-\(UUID().uuidString)"
+    }
+
+    /// Writes ~0.5 s of silent mono 44.1 kHz AAC to a temp file so tests that
+    /// exercise `transcribe` have a real asset for the extractor to read.
+    private func makeSilentAudioFile() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("test-silent-\(UUID().uuidString).m4a")
+        let writer = try AVAssetWriter(outputURL: url, fileType: .m4a)
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: 44_100,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderBitRateKey: 64_000,
+        ]
+        let input = AVAssetWriterInput(mediaType: .audio, outputSettings: settings)
+        writer.add(input)
+        writer.startWriting()
+        writer.startSession(atSourceTime: .zero)
+
+        var asbd = AudioStreamBasicDescription(
+            mSampleRate: 44_100, mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked,
+            mBytesPerPacket: 2, mFramesPerPacket: 1, mBytesPerFrame: 2,
+            mChannelsPerFrame: 1, mBitsPerChannel: 16, mReserved: 0
+        )
+        var format: CMAudioFormatDescription?
+        CMAudioFormatDescriptionCreate(allocator: nil, asbd: &asbd, layoutSize: 0, layout: nil,
+                                       magicCookieSize: 0, magicCookie: nil, extensions: nil,
+                                       formatDescriptionOut: &format)
+
+        let frameCount = 22_050 // 0.5 s
+        let byteCount = frameCount * 2
+        var bytes = [UInt8](repeating: 0, count: byteCount)
+        var block: CMBlockBuffer?
+        CMBlockBufferCreateWithMemoryBlock(allocator: nil, memoryBlock: nil, blockLength: byteCount,
+                                           blockAllocator: nil, customBlockSource: nil,
+                                           offsetToData: 0, dataLength: byteCount, flags: 0,
+                                           blockBufferOut: &block)
+        _ = bytes.withUnsafeMutableBytes { CMBlockBufferReplaceDataBytes(with: $0.baseAddress!, blockBuffer: block!, offsetIntoDestination: 0, dataLength: byteCount) }
+
+        var sample: CMSampleBuffer?
+        var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 44_100),
+                                        presentationTimeStamp: .zero, decodeTimeStamp: .invalid)
+        var sampleSize = 2
+        CMSampleBufferCreate(allocator: nil, dataBuffer: block, dataReady: true,
+                             makeDataReadyCallback: nil, refcon: nil,
+                             formatDescription: format, sampleCount: frameCount,
+                             sampleTimingEntryCount: 1, sampleTimingArray: &timing,
+                             sampleSizeEntryCount: 1, sampleSizeArray: &sampleSize,
+                             sampleBufferOut: &sample)
+
+        input.append(sample!)
+        input.markAsFinished()
+        let sem = DispatchSemaphore(value: 0)
+        writer.finishWriting { sem.signal() }
+        sem.wait()
+        return url
     }
 }
 

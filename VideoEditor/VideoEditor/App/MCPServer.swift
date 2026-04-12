@@ -3006,13 +3006,39 @@ final class MCPServer {
             for i in 0..<faceTracks.count { speakerToFace[i] = i }
         }
 
-        // Step 3: Decide layouts
+        // Step 3: Decide layouts — clip speakers to the requested time range first
         var layoutSegments: [LayoutSegment] = [LayoutSegment(startTime: 0, layout: .split)]
         if let result = await appState.media.transcriptionService.getTranscript(
             for: asset, bundleURL: appState.projectBundleURL
-        ), let speakers = result.speakers {
-            let decider = LayoutDecider()
-            layoutSegments = decider.decide(speakerSegments: speakers, speakerToFace: speakerToFace)
+        ), let allSpeakers = result.speakers, !allSpeakers.isEmpty {
+            let rangeStart = start ?? 0
+            let rangeEnd = end ?? asset.duration
+            let clippedSpeakers = allSpeakers.compactMap { seg -> SpeakerSegment? in
+                let segStart = max(seg.range.start, rangeStart)
+                let segEnd = min(seg.range.end, rangeEnd)
+                guard segEnd > segStart else { return nil }
+                return SpeakerSegment(
+                    speakerID: seg.speakerID,
+                    range: TimeRange(start: segStart - rangeStart, end: segEnd - rangeStart)
+                )
+            }
+
+            // Dominant-speaker fast path: if one speaker holds ≥80% of the range, use fill.
+            let totalDur = clippedSpeakers.reduce(0.0) { $0 + ($1.range.end - $1.range.start) }
+            var perSpeaker: [Int: Double] = [:]
+            for seg in clippedSpeakers {
+                let sid = Int(seg.speakerID.filter(\.isNumber)) ?? 0
+                perSpeaker[sid, default: 0] += seg.range.end - seg.range.start
+            }
+            if totalDur > 0,
+               let (dominantSpeaker, dur) = perSpeaker.max(by: { $0.value < $1.value }),
+               dur / totalDur >= 0.8 {
+                let faceIdx = speakerToFace[dominantSpeaker] ?? dominantSpeaker
+                layoutSegments = [LayoutSegment(startTime: 0, layout: .fill(activeSpeaker: faceIdx))]
+            } else if !clippedSpeakers.isEmpty {
+                let decider = LayoutDecider()
+                layoutSegments = decider.decide(speakerSegments: clippedSpeakers, speakerToFace: speakerToFace)
+            }
         }
 
         // Build config — sourceTimeOffset maps timeline time to source time for face lookups

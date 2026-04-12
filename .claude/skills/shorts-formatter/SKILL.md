@@ -1,7 +1,7 @@
 ---
 name: shorts-formatter
 description: Format clips for vertical short-form platforms (YouTube Shorts, TikTok, Reels). Handles reframing, cold-open hooks, captions, pacing optimization. Verifies output meets platform specs. Use when the user asks about shorts, vertical video, 9:16 reframe, format for TikTok, Reels, YouTube Shorts, portrait mode, vertical video, captions, or subtitles.
-allowed-tools: analyze_audio_energy get_transcript transcribe_asset split_clip trim_clip move_clip add_to_timeline set_clip_speed set_clip_effect set_clip_transform set_clip_transition set_caption_style auto_reframe measure_loudness verify_playback get_state
+allowed-tools: analyze_audio_energy get_transcript get_transcript_with_timing transcribe_asset extract_segment split_clip trim_clip move_clip add_to_timeline set_clip_speed set_clip_effect set_clip_transform set_clip_transition set_caption_style analyze_for_shorts create_short auto_reframe measure_loudness verify_playback get_state export_for_platform clear_project set_overlay_config
 ---
 
 # Shorts Formatter
@@ -26,20 +26,46 @@ Before any formatting work:
 2. If engagement score < 40 or speech ratio < 50%, WARN the user: "This segment has low audio energy — it may not perform well as a Short"
 3. Only proceed with high-energy content
 
-## Step 1: Reframe for vertical (if needed)
+## Step 1: Reframe for vertical — pick the right tool based on speaker count
 
-If source is 16:9:
-1. `auto_reframe` with aspect_ratio "9:16" — gets face-tracked crop regions
-2. `set_clip_transform` to apply: scaleX/scaleY ~1.78 to fill 9:16, positionX/Y to center speaker
+**DO NOT use `auto_reframe` for multi-speaker content.** `auto_reframe` averages face tracks into ONE static crop — fine for a single person, broken for podcasts/interviews where speakers move or alternate.
 
-**Composition refinement (mandatory after auto-reframe):**
-1. Check headroom: Subject's eyes should sit on upper third of frame (not centered)
-2. Verify safe title area: Text must stay > 40px from all edges (mobile notches + OS UI)
-3. Assess subject positioning: Face and hand gestures should dominate (side-to-side movement wastes vertical space)
-4. If subject is off-center or cropped awkwardly, manually adjust positionX/Y before proceeding
-5. Consider subtle vignetting via `set_clip_effect` to isolate subject from background (especially important for weak backgrounds)
+### 1a. Disable any broadcast overlay from prior sessions
+```
+set_overlay_config enabled=false
+```
+This prevents leftover Technologia Talks / lower-third graphics from rendering over your vertical clip.
 
-**Do NOT accept auto-reframe output without verification — it's a starting point, not a final solution.**
+### 1b. Route by subject count
+
+**Check the transcript for speakers first** (via `get_transcript_with_timing` with `include_speakers=true`):
+
+- **Multi-speaker content (podcast, interview, panel):** use `analyze_for_shorts` + `create_short`
+- **Single speaker (talking head, monologue, vlog):** use `analyze_for_shorts` + `create_short` — it auto-detects monologue and applies fill layout
+- **Non-human subject / single subject no face:** fall back to `auto_reframe`
+
+### 1c. Multi-speaker pipeline (preferred for 99% of cases)
+
+```
+1. analyze_for_shorts asset_id=<id> start=<clip_start_s> end=<clip_end_s>
+   → returns: faces detected, speaker-to-face mapping, layout segments
+2. create_short asset_id=<id> layout=<split|fill_0|fill_1>
+   → recomposes to 1080x1920 with proper face tracking
+```
+
+**Picking the layout:**
+- `split` — both speakers stacked vertically. Use when BOTH speakers are actively talking / reacting / visible within the clip window.
+- `fill_0` — fill the frame with speaker 0 only. Use when only speaker 0 talks throughout the clip.
+- `fill_1` — fill the frame with speaker 1 only.
+- **Dynamic switching:** `analyze_for_shorts` auto-detects monologue vs dialogue. If one speaker holds ≥80% of the clip, it will recommend fill; otherwise split. Don't override unless it looks wrong in preview.
+
+### 1d. After layout is applied — verify, don't trust
+
+Take a screenshot (`take_screenshot`) at a middle timestamp to visually confirm:
+- Face is not stretched or squashed
+- Subject's eyes sit in upper third
+- No dead space on sides
+- For `split`: both hosts clearly visible, not overlapping
 
 ## Step 2: Cold-open hook structure
 
