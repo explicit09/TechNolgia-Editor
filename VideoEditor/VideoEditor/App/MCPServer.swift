@@ -6506,7 +6506,7 @@ final class MCPServer {
             outputPath = "/tmp/short_thumbnail_\(UUID().uuidString).png"
         }
 
-        // --- Step 1: Sample 10 frames evenly across the source range ---
+        // --- Step 1: Sample 10 frames evenly across the source range (at analysis res for speed) ---
         let sampleCount = 10
         let duration = sourceEnd - sourceStart
         let interval = duration / Double(sampleCount + 1)
@@ -6514,12 +6514,10 @@ final class MCPServer {
         let avAsset = AVURLAsset(url: asset.sourceURL)
         let generator = AVAssetImageGenerator(asset: avAsset)
         generator.appliesPreferredTrackTransform = true
-        // Use analysis resolution (640x360) to score quickly
         generator.maximumSize = CGSize(width: 640, height: 360)
 
-        var bestImage: CGImage? = nil
         var bestScore: Double = -1
-        var bestTime: Double = sourceStart
+        var bestTime: Double = sourceStart + duration / 2  // fallback: midpoint
 
         for i in 1...sampleCount {
             let t = sourceStart + interval * Double(i)
@@ -6529,15 +6527,10 @@ final class MCPServer {
             if score > bestScore {
                 bestScore = score
                 bestTime = t
-                bestImage = cgImage
             }
         }
 
-        guard bestImage != nil else {
-            return "Error: Could not extract any frames from asset in range \(sourceStart)-\(sourceEnd)s"
-        }
-
-        // --- Step 2: Re-extract best frame at full 1920x1080 resolution for compositing ---
+        // --- Step 2: Re-extract best frame at full resolution for compositing ---
         generator.maximumSize = CGSize(width: 1920, height: 1080)
         guard let fullResFrame = try? generator.copyCGImage(
             at: CMTime(seconds: bestTime, preferredTimescale: 600),
@@ -6546,10 +6539,133 @@ final class MCPServer {
             return "Error: Could not re-extract best frame at full resolution"
         }
 
-        // --- Step 3: Render 1080x1920 PNG ---
+        // --- Step 3: Build ShortFormConfig via face tracking + speaker mapping ---
+        let mediaURL = resolvedToolMediaURL(for: asset)
+        let renderSize = CGSize(width: 1080, height: 1920)
+
+        // Attempt face tracking over the source range
+        let tracker = MultiFaceTracker()
+        let faceTracks: [FaceTrack]
+        do {
+            faceTracks = try await tracker.trackRange(url: mediaURL, start: sourceStart, end: sourceEnd)
+        } catch {
+            faceTracks = []
+        }
+
+        // Build the ShortFormConfig (with graceful fallback if no faces found)
+        let shortFormConfig: ShortFormConfig
+        let layoutDescription: String
+
+        if faceTracks.isEmpty {
+            // Fallback: no faces detected — use center-crop (legacy behavior)
+            shortFormConfig = ShortFormConfig.empty
+            layoutDescription = "center-crop (no faces detected)"
+        } else {
+            // Map speakers to faces via lip-activity correlation
+            var speakerToFace: [Int: Int] = [:]
+            if let transcriptResult = await appState.media.transcriptionService.getTranscript(
+                for: asset, bundleURL: appState.projectBundleURL
+            ), let allSpeakers = transcriptResult.speakers {
+                let mapper = SpeakerFaceMapper()
+                let clippedForLip = allSpeakers.compactMap { seg -> SpeakerSegment? in
+                    let segStart = max(seg.range.start, sourceStart)
+                    let segEnd = min(seg.range.end, sourceEnd)
+                    guard segEnd > segStart else { return nil }
+                    return SpeakerSegment(speakerID: seg.speakerID,
+                                         range: TimeRange(start: segStart, end: segEnd))
+                }
+                speakerToFace = await mapper.mapByLipActivity(
+                    speakerSegments: clippedForLip.isEmpty ? allSpeakers : clippedForLip,
+                    faceTracks: faceTracks,
+                    videoURL: mediaURL,
+                    sourceOffset: 0
+                )
+            } else {
+                for i in 0..<faceTracks.count { speakerToFace[i] = i }
+            }
+
+            // Decide layout: fill for dominant monologue (≥80%), split for dialogue
+            var layoutSegments: [LayoutSegment] = [LayoutSegment(startTime: 0, layout: .split)]
+            if let transcriptResult = await appState.media.transcriptionService.getTranscript(
+                for: asset, bundleURL: appState.projectBundleURL
+            ), let allSpeakers = transcriptResult.speakers, !allSpeakers.isEmpty {
+                let clippedSpeakers = allSpeakers.compactMap { seg -> SpeakerSegment? in
+                    let segStart = max(seg.range.start, sourceStart)
+                    let segEnd = min(seg.range.end, sourceEnd)
+                    guard segEnd > segStart else { return nil }
+                    return SpeakerSegment(speakerID: seg.speakerID,
+                                         range: TimeRange(start: segStart - sourceStart,
+                                                          end: segEnd - sourceStart))
+                }
+                let totalDur = clippedSpeakers.reduce(0.0) { $0 + ($1.range.end - $1.range.start) }
+                var perSpeaker: [Int: Double] = [:]
+                for seg in clippedSpeakers {
+                    let sid = Int(seg.speakerID.filter(\.isNumber)) ?? 0
+                    perSpeaker[sid, default: 0] += seg.range.end - seg.range.start
+                }
+                if totalDur > 0,
+                   let (dominantSpeaker, dur) = perSpeaker.max(by: { $0.value < $1.value }),
+                   dur / totalDur >= 0.8 {
+                    let faceIdx = speakerToFace[dominantSpeaker] ?? dominantSpeaker
+                    layoutSegments = [LayoutSegment(startTime: 0, layout: .fill(activeSpeaker: faceIdx))]
+                } else if !clippedSpeakers.isEmpty {
+                    let decider = LayoutDecider()
+                    layoutSegments = decider.decide(speakerSegments: clippedSpeakers,
+                                                    speakerToFace: speakerToFace)
+                }
+            } else if faceTracks.count == 1 {
+                // Single face, no transcript — fill on that face
+                layoutSegments = [LayoutSegment(startTime: 0, layout: .fill(activeSpeaker: 0))]
+            }
+
+            shortFormConfig = ShortFormConfig(
+                isEnabled: true,
+                outputAspect: .vertical9x16,
+                faceTracks: faceTracks,
+                speakerToFace: speakerToFace,
+                layoutSegments: layoutSegments,
+                sourceTimeOffset: sourceStart
+            )
+            layoutDescription = "\(layoutSegments.first?.layout) (faces: \(faceTracks.count))"
+        }
+
+        // --- Step 4: Recompose using ShortFormLayoutRenderer or center-crop fallback ---
         let outW = 1080
         let outH = 1920
 
+        let composedCI: CIImage
+        if shortFormConfig.isEnabled {
+            // Face-tracked composition matching the actual short video output
+            let sourceCI = CIImage(cgImage: fullResFrame)
+            composedCI = ShortFormLayoutRenderer.recompose(
+                source: sourceCI,
+                config: shortFormConfig,
+                at: bestTime,
+                renderSize: renderSize
+            )
+        } else {
+            // Graceful fallback: center-crop
+            let frameW = CGFloat(fullResFrame.width)
+            let frameH = CGFloat(fullResFrame.height)
+            let targetAspect = CGFloat(outW) / CGFloat(outH)
+            let cropW = frameH * targetAspect
+            let cropX = (frameW - cropW) / 2
+            // CIImage origin is bottom-left, crop full height
+            let sourceCI = CIImage(cgImage: fullResFrame)
+            composedCI = sourceCI.cropped(to: CGRect(x: cropX, y: 0, width: cropW, height: frameH))
+                .transformed(by: CGAffineTransform(translationX: -cropX, y: 0))
+                .transformed(by: CGAffineTransform(scaleX: CGFloat(outW) / cropW,
+                                                   y: CGFloat(outH) / frameH))
+        }
+
+        // Render CIImage → CGImage via CIContext
+        let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+        let composedRect = CGRect(x: 0, y: 0, width: outW, height: outH)
+        guard let composedCG = ciContext.createCGImage(composedCI, from: composedRect) else {
+            return "Error: Could not render composed frame to CGImage"
+        }
+
+        // --- Step 5: Draw text overlay and brand logo on top ---
         guard let ctx = CGContext(
             data: nil, width: outW, height: outH,
             bitsPerComponent: 8, bytesPerRow: outW * 4,
@@ -6562,26 +6678,10 @@ final class MCPServer {
         let canvasW = CGFloat(outW)
         let canvasH = CGFloat(outH)
 
-        // 3a. Background: center-crop the 16:9 frame to fill 9:16.
-        //     The source frame is ~1920x1080. We need to show a 1080-wide strip
-        //     from the center of the 1920-wide image, scaled up to fill 1920 tall.
-        let frameW = CGFloat(fullResFrame.width)
-        let frameH = CGFloat(fullResFrame.height)
+        // 5a. Draw the face-tracked composed frame as background
+        ctx.draw(composedCG, in: CGRect(x: 0, y: 0, width: canvasW, height: canvasH))
 
-        // Scale so that the frame fills the 1080-wide canvas horizontally:
-        //   scaledH = canvasW / frameW * frameH
-        // If scaledH < canvasH, we need to scale to fill height instead.
-        let scaleToFillW = canvasW / frameW
-        let scaleToFillH = canvasH / frameH
-        let bgScale = max(scaleToFillW, scaleToFillH)
-        let scaledW = frameW * bgScale
-        let scaledH = frameH * bgScale
-        let bgX = (canvasW - scaledW) / 2
-        let bgY = (canvasH - scaledH) / 2
-        ctx.draw(fullResFrame, in: CGRect(x: bgX, y: bgY, width: scaledW, height: scaledH))
-
-        // 3b. Dark gradient at the TOP (behind hook text) — so text is readable
-        let gradTop: CGFloat = 0
+        // 5b. Dark gradient at the TOP (behind hook text) — so text is readable
         let gradBottom: CGFloat = canvasH * 0.30
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         let darkOpaque = CGColor(red: 0, green: 0, blue: 0, alpha: 0.70)
@@ -6597,12 +6697,11 @@ final class MCPServer {
                                    options: [])
             ctx.restoreGState()
         }
-        _ = gradTop  // suppress unused-variable warning
 
-        // 3c. Hook text — bold condensed, centered, at top with ~80px margin from top
+        // 5c. Hook text — bold condensed, centered, at top with ~80px margin from top
         renderShortHookText(ctx: ctx, text: hookText, canvasWidth: canvasW, canvasHeight: canvasH)
 
-        // 3d. Optional brand logo — bottom-right corner
+        // 5d. Optional brand logo — bottom-right corner
         if showBrand, let brand = loadThumbnailBrand(templateName: templateName).logoImage {
             let logoMaxH: CGFloat = 60
             let logoW = CGFloat(brand.width)
@@ -6616,7 +6715,7 @@ final class MCPServer {
             ctx.draw(brand, in: CGRect(x: x, y: y, width: drawW, height: drawH))
         }
 
-        // 3e. Export PNG
+        // 5e. Export PNG
         guard let cgFinal = ctx.makeImage() else {
             return "Error: Could not finalize CGContext image"
         }
@@ -6638,7 +6737,7 @@ final class MCPServer {
             return "Error writing file: \(error.localizedDescription)"
         }
 
-        return "Short thumbnail generated: \(outputPath)\nBest frame: \(String(format: "%.2f", bestTime))s (score=\(String(format: "%.1f", bestScore)))\nSize: \(outW)x\(outH)"
+        return "Short thumbnail generated: \(outputPath)\nBest frame: \(String(format: "%.2f", bestTime))s (score=\(String(format: "%.1f", bestScore)))\nLayout: \(layoutDescription)\nSize: \(outW)x\(outH)"
     }
 
     /// Render hook text onto a 9:16 canvas. Draws centered bold text at the top
