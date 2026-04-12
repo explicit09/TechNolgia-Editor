@@ -412,7 +412,7 @@ final class MCPServer {
                         "asset_id": ["type": "string", "description": "UUID of the asset to analyze"],
                         "max_moments": ["type": "number", "description": "Maximum number of viral moments to return (default: 10)"],
                         "min_duration_seconds": ["type": "number", "description": "Minimum clip duration in seconds (default: 15)"],
-                        "max_duration_seconds": ["type": "number", "description": "Maximum clip duration in seconds (default: 60)"],
+                        "max_duration_seconds": ["type": "number", "description": "Maximum clip duration in seconds (default: 180). YouTube Shorts caps at 59s, Reels at 90s, TikTok/LinkedIn go longer. Filter downstream by platform."],
                     ], "required": ["asset_id"]],
                 ],
                 [
@@ -3431,7 +3431,7 @@ final class MCPServer {
         // not to pad the list. Reviewers curate afterward.
         let maxMoments = args["max_moments"] as? Int ?? (args["max_moments"] as? Double).map({ Int($0) }) ?? 40
         let minDuration = args["min_duration_seconds"] as? Double ?? 15.0
-        let maxDuration = args["max_duration_seconds"] as? Double ?? 60.0
+        let maxDuration = args["max_duration_seconds"] as? Double ?? 180.0
 
         // Load transcript
         guard let result = await appState.media.transcriptionService.getTranscript(
@@ -3543,6 +3543,7 @@ final class MCPServer {
               "evergreen_score": 8,
               "trending_score": 3,
               "category": "evergreen" | "trending" | "both",
+              "platform_fit": ["youtube_shorts", "instagram_reels", "tiktok", "twitter", "linkedin"],
               "reasoning": "one sentence on why this is viral",
               "cold_open_recommended": true,
               "speakers_involved": ["0", "1"]
@@ -3550,20 +3551,34 @@ final class MCPServer {
           ]
         }
 
-        Rules:
+        Duration rules:
+        - Pick the duration that SERVES THE MOMENT. Don't stretch or truncate to hit a number.
+        - Absolute min: \(Int(minDuration))s. Below that, the clip has no room to breathe — drop it.
+        - Absolute max: \(Int(maxDuration))s. Above that, it's a story segment, not a viral clip.
+        - Most clips should land 20-45s. Some stories/debates genuinely need 60-120s — that's fine, they just won't fit on YouTube Shorts.
+
+        Platform fit — for each moment, include every platform the duration works for:
+        - "youtube_shorts": duration ≤ 59s
+        - "instagram_reels": duration ≤ 90s
+        - "tiktok": duration ≤ 600s (basically any viable moment)
+        - "twitter": duration ≤ 140s
+        - "linkedin": duration ≤ 600s
+
+        Other rules:
         - Use the exact "s" and "e" values from the word data for clip_start_time and clip_end_time — do NOT estimate.
         - clip_start_time must be the "s" value of the first word in the clip.
-        - clip_end_time must be the "e" value of the last word in the clip.
-        - Each clip must be between \(Int(minDuration)) and \(Int(maxDuration)) seconds (duration_seconds = clip_end_time - clip_start_time).
+        - clip_end_time must be the "e" value of the last word in the clip. Must be > clip_start_time.
+        - duration_seconds must equal clip_end_time - clip_start_time (positive, non-zero).
         - Rank strongest first (by max(evergreen_score, trending_score), then by combined score).
         - Each clip must be a complete thought — don't cut mid-sentence.
-        - Hard cap: do not return more than \(maxMoments) moments even if more qualify — if the transcript has more, drop the weakest and note it in a "note" field.
+        - Hard cap: do not return more than \(maxMoments) moments even if more qualify.
+        - If the same core moment can ship as a tight edit AND an extended edit, return only the stronger one. Don't list alternates as separate moments.
 
         OUTPUT FORMAT REQUIREMENTS — read carefully:
         - Do your thinking silently. When ready, emit exactly ONE final JSON object wrapped in a ```json code block.
         - Do NOT include multiple JSON blocks, revisions, or draft attempts. Only the final answer.
         - No prose before or after the JSON block.
-        - Every moment must satisfy the duration constraint — re-check before emitting.
+        - Before emitting, verify every moment: clip_end_time > clip_start_time, duration within [\(Int(minDuration)), \(Int(maxDuration))]s, platform_fit matches duration. Fix or drop any that fail.
 
         Input transcript:
         \(wordJSON)
@@ -3599,11 +3614,38 @@ final class MCPServer {
                 return "=== VIRAL MOMENTS ===\nAsset: \(asset.name)\n\nCould not parse structured JSON. Raw Claude response:\n\n\(rawContent)"
             }
 
+            // Server-side validation: drop broken moments (negative/zero duration, or outside user-provided bounds)
+            let rawCount = moments.count
+            moments = moments.filter { moment in
+                let start = moment["clip_start_time"] as? Double ?? 0
+                let end = moment["clip_end_time"] as? Double ?? 0
+                let duration = end - start
+                return end > start && duration >= minDuration && duration <= maxDuration
+            }
+            // Auto-derive platform_fit if Claude didn't set it (belt-and-suspenders)
+            moments = moments.map { moment in
+                var m = moment
+                let start = m["clip_start_time"] as? Double ?? 0
+                let end = m["clip_end_time"] as? Double ?? 0
+                let duration = end - start
+                if (m["platform_fit"] as? [String]) == nil {
+                    var fit: [String] = ["tiktok", "linkedin"]
+                    if duration <= 59 { fit.insert("youtube_shorts", at: 0) }
+                    if duration <= 90 { fit.insert("instagram_reels", at: 0) }
+                    if duration <= 140 { fit.insert("twitter", at: 0) }
+                    m["platform_fit"] = fit
+                }
+                return m
+            }
+            let droppedCount = rawCount - moments.count
+
             // Build human-readable summary
             var output = "=== VIRAL MOMENTS ===\n"
             output += "Asset: \(asset.name)\n"
             output += "Cap: \(maxMoments) moments (\(Int(minDuration))-\(Int(maxDuration))s)\n"
-            output += "Found: \(moments.count) moments\n\n"
+            output += "Found: \(moments.count) moments"
+            if droppedCount > 0 { output += " (\(droppedCount) dropped for invalid duration)" }
+            output += "\n\n"
 
             for (index, moment) in moments.enumerated() {
                 let hook = moment["hook"] as? String ?? ""
@@ -3622,11 +3664,24 @@ final class MCPServer {
                 let startFormatted = TranscriptAnalysisSupport.formatTimestamp(startTime)
                 let endFormatted = TranscriptAnalysisSupport.formatTimestamp(endTime)
 
+                let platformFit = (moment["platform_fit"] as? [String]) ?? []
+                let platformLabels: [String: String] = [
+                    "youtube_shorts": "Shorts",
+                    "instagram_reels": "Reels",
+                    "tiktok": "TikTok",
+                    "twitter": "X",
+                    "linkedin": "LinkedIn",
+                ]
+                let platformDisplay = platformFit.compactMap { platformLabels[$0] ?? $0 }.joined(separator: ", ")
+
                 output += "MOMENT \(index + 1):\n"
                 output += "  Start: [\(startFormatted)] (\(String(format: "%.2f", startTime))s)\n"
                 output += "  End:   [\(endFormatted)] (\(String(format: "%.2f", endTime))s)\n"
                 output += "  Duration: \(String(format: "%.1f", duration))s\n"
                 output += "  Scores: evergreen=\(evergreen)/10, trending=\(trending)/10\(category.isEmpty ? "" : " [\(category)]")\n"
+                if !platformDisplay.isEmpty {
+                    output += "  Ships on: \(platformDisplay)\n"
+                }
                 output += "  Hook: \"\(hook)\"\n"
                 output += "  Opens with: \"\(approxStart)\"\n"
                 output += "  Closes with: \"\(approxEnd)\"\n"
