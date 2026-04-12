@@ -22,7 +22,7 @@ public final class ClaudeProvider: AIProvider, @unchecked Sendable {
         self.model = model
         self.baseURL = baseURL
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 120  // 2 minutes for tool-use responses
+        config.timeoutIntervalForRequest = 600  // 10 minutes — long-context + web_search can be slow
         self.session = URLSession(configuration: config)
     }
 
@@ -39,10 +39,10 @@ public final class ClaudeProvider: AIProvider, @unchecked Sendable {
     }
 
     public func complete(messages: [AIMessage], tools: [AIToolDefinition], modelOverride: String?, additionalSystemPrompt: String? = nil) async throws -> AIResponse {
-        try await complete(messages: messages, tools: tools, modelOverride: modelOverride, additionalSystemPrompt: additionalSystemPrompt, enableWebSearch: false, maxWebSearchUses: 5)
+        try await complete(messages: messages, tools: tools, modelOverride: modelOverride, additionalSystemPrompt: additionalSystemPrompt, enableWebSearch: false, maxWebSearchUses: 5, enable1MContext: false)
     }
 
-    public func complete(messages: [AIMessage], tools: [AIToolDefinition], modelOverride: String?, additionalSystemPrompt: String? = nil, enableWebSearch: Bool = false, maxWebSearchUses: Int = 5) async throws -> AIResponse {
+    public func complete(messages: [AIMessage], tools: [AIToolDefinition], modelOverride: String?, additionalSystemPrompt: String? = nil, enableWebSearch: Bool = false, maxWebSearchUses: Int = 5, enable1MContext: Bool = false) async throws -> AIResponse {
         let effectiveModel = modelOverride ?? model
         let url = baseURL.appendingPathComponent("/v1/messages")
         var request = URLRequest(url: url)
@@ -50,8 +50,12 @@ public final class ClaudeProvider: AIProvider, @unchecked Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        if enableWebSearch {
-            request.setValue("web-search-2025-03-05", forHTTPHeaderField: "anthropic-beta")
+
+        var betaFlags: [String] = []
+        if enableWebSearch { betaFlags.append("web-search-2025-03-05") }
+        if enable1MContext { betaFlags.append("context-1m-2025-08-07") }
+        if !betaFlags.isEmpty {
+            request.setValue(betaFlags.joined(separator: ","), forHTTPHeaderField: "anthropic-beta")
         }
 
         // Build messages using JSONSerialization for full control over structure

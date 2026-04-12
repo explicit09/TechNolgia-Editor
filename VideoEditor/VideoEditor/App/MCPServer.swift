@@ -3426,8 +3426,8 @@ final class MCPServer {
             return "Error: Failed to serialize transcript words."
         }
 
-        // Use claude-opus-4-5 for long-context single-pass; fall back to sonnet on error
-        let provider = ClaudeProvider(apiKey: apiKey, model: "claude-opus-4-5")
+        // Use claude-opus-4-6 with 1M context for long podcasts (beta header set below)
+        let provider = ClaudeProvider(apiKey: apiKey, model: "claude-opus-4-6")
 
         let prompt = """
         You are a social-media expert finding viral 15-60 second clips in a podcast/interview transcript.
@@ -3495,7 +3495,8 @@ final class MCPServer {
                 modelOverride: nil,
                 additionalSystemPrompt: nil,
                 enableWebSearch: true,
-                maxWebSearchUses: 5
+                maxWebSearchUses: 5,
+                enable1MContext: true
             )
 
             let rawContent = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
