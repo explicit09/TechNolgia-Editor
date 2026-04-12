@@ -3552,7 +3552,8 @@ final class MCPServer {
         {
           "moments": [
             {
-              "hook": "exact quote of the punchline or opening sentence",
+              "hook": "I've always been a big Elon Musk fan until I met Explicit... this guy calls him his dad",
+              "thumbnail_label": "ELON'S BIGGEST FAN",
               "approx_start_word": "first few words of the clip opening sentence",
               "approx_end_word": "last few words of the clip closing sentence",
               "clip_start_time": 1234.5,
@@ -3581,6 +3582,15 @@ final class MCPServer {
         - "tiktok": duration ≤ 600s (basically any viable moment)
         - "twitter": duration ≤ 140s
         - "linkedin": duration ≤ 600s
+
+        thumbnail_label rules — read carefully:
+        - Every moment MUST have a thumbnail_label — a 2-5 word UPPERCASE phrase for the thumbnail pill.
+        - MUST name a specific person, company, number, place, or product. NEVER use abstract nouns alone.
+        - Good labels: "$100B COLLAPSE", "ELON'S BIGGEST FAN", "AFRICA'S AI GAP", "KARPATHY'S TRICK", "WHY VIRALITY IS FAKE", "$242B AI FUNDING"
+        - Bad labels (too vague, DO NOT use): "AI PROBLEM", "STARTUP ADVICE", "HOT TAKE", "BEST MOMENT", "THE TRUTH"
+        - Think YouTube/TikTok thumbnail text: "NO ONE BELIEVES ME", "$1,000,000 MISTAKE", "ELON WAS WRONG"
+        - Must fit in ~24 characters including spaces. Prefer names + numbers + punctuation over generic words.
+        - Should tease what the viewer learns — NOT reveal the conclusion itself.
 
         Other rules:
         - Use the exact "s" and "e" values from the word data for clip_start_time and clip_end_time — do NOT estimate.
@@ -3667,6 +3677,7 @@ final class MCPServer {
 
             for (index, moment) in moments.enumerated() {
                 let hook = moment["hook"] as? String ?? ""
+                let thumbnailLabel = moment["thumbnail_label"] as? String ?? ""
                 let startTime = moment["clip_start_time"] as? Double ?? 0
                 let endTime = moment["clip_end_time"] as? Double ?? 0
                 let duration = moment["duration_seconds"] as? Double ?? (endTime - startTime)
@@ -3701,6 +3712,9 @@ final class MCPServer {
                     output += "  Ships on: \(platformDisplay)\n"
                 }
                 output += "  Hook: \"\(hook)\"\n"
+                if !thumbnailLabel.isEmpty {
+                    output += "  Thumbnail label: \"\(thumbnailLabel)\"\n"
+                }
                 output += "  Opens with: \"\(approxStart)\"\n"
                 output += "  Closes with: \"\(approxEnd)\"\n"
                 output += "  Speakers: \(speakersInvolved.isEmpty ? "unknown" : speakersInvolved)\n"
@@ -6499,7 +6513,20 @@ final class MCPServer {
 
         let showBrand = args["show_brand"] as? Bool ?? true
         let templateName = args["template"] as? String
-        let highlightWordArg = args["highlight_word"] as? String
+        let highlightWordArg = args["highlight_word"] as? String  // kept for backwards compat, unused by pill renderer
+        // label_text: short pill label (preferred). Falls back to hook_text truncated to 24 chars.
+        let rawLabelText: String
+        if let lt = args["label_text"] as? String, !lt.isEmpty {
+            rawLabelText = lt
+        } else {
+            rawLabelText = hookText
+        }
+        let pillLabelText: String = {
+            let upper = rawLabelText.uppercased()
+            if upper.count <= 24 { return upper }
+            let truncated = String(upper.prefix(23))
+            return truncated + "…"
+        }()
 
         let outputPath: String
         if let custom = args["output_path"] as? String {
@@ -6680,9 +6707,9 @@ final class MCPServer {
         // 5a. Draw the face-tracked composed frame as background
         ctx.draw(composedCG, in: CGRect(x: 0, y: 0, width: canvasW, height: canvasH))
 
-        // 5b + 5c. Hook text with tight scrim behind it (scrim drawn inside renderShortHookText)
-        renderShortHookText(ctx: ctx, text: hookText, highlightWord: highlightWordArg,
-                            canvasWidth: canvasW, canvasHeight: canvasH)
+        // 5b + 5c. Brand-color pill label at bottom-left
+        renderShortPillLabel(ctx: ctx, text: pillLabelText,
+                             canvasWidth: canvasW, canvasHeight: canvasH)
 
         // 5d. Optional brand logo — bottom-right corner
         if showBrand, let brand = loadThumbnailBrand(templateName: templateName).logoImage {
@@ -6720,7 +6747,7 @@ final class MCPServer {
             return "Error writing file: \(error.localizedDescription)"
         }
 
-        return "Short thumbnail generated: \(outputPath)\nBest frame: \(String(format: "%.2f", bestTime))s (score=\(String(format: "%.1f", bestScore)))\nLayout: \(layoutDescription)\nSize: \(outW)x\(outH)"
+        return "Short thumbnail generated: \(outputPath)\nBest frame: \(String(format: "%.2f", bestTime))s (score=\(String(format: "%.1f", bestScore)))\nLayout: \(layoutDescription)\nSize: \(outW)x\(outH)\nThumbnail label: \"\(pillLabelText)\""
     }
 
     /// Auto-pick a word from the hook to highlight in gold.
@@ -6757,19 +6784,22 @@ final class MCPServer {
         return words.last
     }
 
-    /// Render hook text onto a 9:16 canvas using Opus Clip / MrBeast style:
-    /// - BarlowCondensed-Black (or fallback) at huge size (85-200pt)
-    /// - White fill, gold highlight word, thick black stroke, drop shadow
-    /// - Tight semi-transparent scrim only behind the text block
-    private func renderShortHookText(ctx: CGContext, text: String,
-                                     highlightWord: String?,
-                                     canvasWidth: CGFloat, canvasHeight: CGFloat) {
-        let sidePad: CGFloat = 60
-        let maxTextWidth = canvasWidth - sidePad * 2
-        let topMargin: CGFloat = 80  // distance from top of canvas to top of text block
-        let maxLines = 3
+    /// Render a TechNologia-style brand-color pill label at the bottom-left of the canvas.
+    /// - Pill: brand gold (#C9A028) fill, 24px corner radius, auto-sized to text
+    /// - Text: dark navy (#070D17), bold condensed font, UPPERCASE, 56-72pt fitted to 24-char max
+    /// - Pill drop shadow: 8px blur, 4px offset, black at 50%
+    /// - Position: 48px from left edge, 120px from bottom edge
+    private func renderShortPillLabel(ctx: CGContext, text: String,
+                                      canvasWidth: CGFloat, canvasHeight: CGFloat) {
+        // Brand colors
+        let goldR: CGFloat = 0xC9 / 255.0   // #C9A028
+        let goldG: CGFloat = 0xA0 / 255.0
+        let goldB: CGFloat = 0x28 / 255.0
+        let navyR: CGFloat = 0x07 / 255.0   // #070D17
+        let navyG: CGFloat = 0x0D / 255.0
+        let navyB: CGFloat = 0x17 / 255.0
 
-        // Font fallback chain: BarlowCondensed-Black → Anton-Regular → Impact → HelveticaNeue-CondensedBlack → Helvetica-Bold
+        // Font fallback chain: bold condensed
         let preferredFonts = [
             "BarlowCondensed-Black",
             "Anton-Regular",
@@ -6779,99 +6809,109 @@ final class MCPServer {
         ]
         var chosenFontName = "Helvetica-Bold"
         for name in preferredFonts {
-            let test = CTFontCreateWithName(name as CFString, 80, nil)
+            let test = CTFontCreateWithName(name as CFString, 60, nil)
             let actualName = CTFontCopyPostScriptName(test) as String
-            // Verify the font actually loaded (not substituted to system UI)
             if actualName.lowercased().contains(String(name.lowercased().prefix(5))) {
                 chosenFontName = name
                 break
             }
         }
 
+        // Pill layout constants
+        let pillPadX: CGFloat = 40   // horizontal padding inside pill on each side
+        let pillPadY: CGFloat = 24   // vertical padding inside pill on each side
+        let cornerRadius: CGFloat = 24
+        let pillLeft: CGFloat = 48   // pill left edge from canvas left
+        let pillBottom: CGFloat = 120  // pill bottom edge from canvas bottom (CGContext y=0 at bottom)
+
+        // Text: already uppercased and truncated by caller (max 24 chars)
         let upperText = text.uppercased()
 
-        // Binary-search the largest font size that fits within maxLines.
-        // Range: 85pt (min) to 200pt (max).
-        var lo: CGFloat = 85
-        var hi: CGFloat = 200
-        for _ in 0..<12 {
+        // Max pill text width: pill should not exceed ~80% of canvas width
+        let maxPillTextWidth: CGFloat = canvasWidth * 0.80 - pillPadX * 2
+
+        // Binary-search best font size in 56-72pt that fits on 1-2 lines within maxPillTextWidth
+        var lo: CGFloat = 56
+        var hi: CGFloat = 72
+        for _ in 0..<10 {
             let mid = (lo + hi) / 2
             let f = CTFontCreateWithName(chosenFontName as CFString, mid, nil)
-            let lc = estimateLineCount(text: upperText, font: f, maxWidth: maxTextWidth)
-            if lc <= maxLines { lo = mid } else { hi = mid }
+            let lc = estimateLineCount(text: upperText, font: f, maxWidth: maxPillTextWidth)
+            if lc <= 2 { lo = mid } else { hi = mid }
         }
-        let fontSize = max(lo, 85)
+        let fontSize = lo
         let finalFont = CTFontCreateWithName(chosenFontName as CFString, fontSize, nil)
 
-        // Determine which word to highlight
-        let resolvedHighlight: String? = highlightWord ?? pickHighlightWord(text)
+        // Measure text size using CTFramesetter
+        let kernValue: CGFloat = fontSize * -0.02  // slight tightening
+        let paraStyle = NSMutableParagraphStyle()
+        paraStyle.alignment = .left
+        paraStyle.lineHeightMultiple = 1.0
 
-        // Build NSMutableAttributedString for per-word color + stroke
         let attrString = NSMutableAttributedString(string: upperText)
         let fullRange = NSRange(location: 0, length: attrString.length)
-
-        // Tight letter spacing: tracking -2% of font size in points (negative kern)
-        let kernValue = fontSize * -0.02
-
-        attrString.addAttribute(.font,            value: finalFont, range: fullRange)
-        attrString.addAttribute(.foregroundColor, value: NSColor.white, range: fullRange)
-        // Negative strokeWidth = stroke + fill simultaneously
-        attrString.addAttribute(.strokeWidth,     value: NSNumber(value: -6.0), range: fullRange)
-        attrString.addAttribute(.strokeColor,     value: NSColor.black, range: fullRange)
-        attrString.addAttribute(.kern,            value: NSNumber(value: Float(kernValue)), range: fullRange)
-
-        // Apply gold highlight to the matched word
-        if let hw = resolvedHighlight {
-            let nsUpper = upperText as NSString
-            let searchRange = nsUpper.range(of: hw.uppercased(),
-                                            options: [.caseInsensitive, .diacriticInsensitive])
-            if searchRange.location != NSNotFound {
-                let gold = NSColor(red: 1.0, green: 0.843, blue: 0.0, alpha: 1.0) // #FFD700
-                attrString.addAttribute(.foregroundColor, value: gold, range: searchRange)
-            }
-        }
-
-        // Paragraph style: tight line spacing (0.95x line height)
-        let paraStyle = NSMutableParagraphStyle()
-        paraStyle.alignment = .center
-        paraStyle.lineHeightMultiple = 0.95
+        attrString.addAttribute(.font,           value: finalFont, range: fullRange)
+        attrString.addAttribute(.kern,           value: NSNumber(value: Float(kernValue)), range: fullRange)
         attrString.addAttribute(.paragraphStyle, value: paraStyle, range: fullRange)
+        attrString.addAttribute(.foregroundColor,
+                                value: NSColor(red: navyR, green: navyG, blue: navyB, alpha: 1.0),
+                                range: fullRange)
 
-        // Measure block height using CTFramesetter
         let framesetter = CTFramesetterCreateWithAttributedString(attrString as CFAttributedString)
-        let lineCount = estimateLineCount(text: upperText, font: finalFont, maxWidth: maxTextWidth)
-        let lineHeight = (CTFontGetAscent(finalFont) + CTFontGetDescent(finalFont) + CTFontGetLeading(finalFont)) * 0.95
-        let textBlockHeight = lineHeight * CGFloat(lineCount) + fontSize * 0.2 // small padding
+        let lineCount = estimateLineCount(text: upperText, font: finalFont, maxWidth: maxPillTextWidth)
+        let lineH = CTFontGetAscent(finalFont) + CTFontGetDescent(finalFont) + CTFontGetLeading(finalFont)
+        let textBlockH = lineH * CGFloat(lineCount)
 
-        // CGContext y=0 is at the BOTTOM; text block sits at the TOP
-        let textOriginY = canvasHeight - topMargin - textBlockHeight
-
-        // --- Draw tight scrim behind text block ---
-        let scrimPadX: CGFloat = 50  // scrim extends ~50px beyond text each side
-        let scrimPadY: CGFloat = 30
-        let scrimRect = CGRect(
-            x: sidePad - scrimPadX,
-            y: textOriginY - scrimPadY,
-            width: maxTextWidth + scrimPadX * 2,
-            height: textBlockHeight + scrimPadY * 2
+        // Determine actual text width (single line if it fits, wrapped if needed)
+        let fitSize = CTFramesetterSuggestFrameSizeWithConstraints(
+            framesetter,
+            CFRange(location: 0, length: 0),
+            nil,
+            CGSize(width: maxPillTextWidth, height: 10000),
+            nil
         )
+        let textW = min(fitSize.width, maxPillTextWidth)
+
+        // Pill geometry
+        let pillW = textW + pillPadX * 2
+        let pillH = textBlockH + pillPadY * 2
+
+        let pillRect = CGRect(
+            x: pillLeft,
+            y: pillBottom,
+            width: pillW,
+            height: pillH
+        )
+
+        // --- Draw pill drop shadow ---
         ctx.saveGState()
-        ctx.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.40))
-        let scrimPath = CGPath(roundedRect: scrimRect, cornerWidth: 18, cornerHeight: 18, transform: nil)
-        ctx.addPath(scrimPath)
+        ctx.setShadow(offset: CGSize(width: 0, height: -4), blur: 8,
+                      color: CGColor(red: 0, green: 0, blue: 0, alpha: 0.50))
+        // Draw the pill filled with gold — shadow will be cast from this
+        ctx.setFillColor(CGColor(red: goldR, green: goldG, blue: goldB, alpha: 1.0))
+        let pillPath = CGPath(roundedRect: pillRect, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
+        ctx.addPath(pillPath)
         ctx.fillPath()
         ctx.restoreGState()
 
-        // --- Draw text with drop shadow ---
+        // --- Draw pill fill (no shadow on top layer, avoids double shadow) ---
         ctx.saveGState()
-        // Drop shadow: 6px blur, 4px offset downward (negative y in CG coords), 70% black
-        ctx.setShadow(offset: CGSize(width: 0, height: -4), blur: 6,
-                      color: CGColor(red: 0, green: 0, blue: 0, alpha: 0.70))
+        ctx.setFillColor(CGColor(red: goldR, green: goldG, blue: goldB, alpha: 1.0))
+        ctx.addPath(pillPath)
+        ctx.fillPath()
+        ctx.restoreGState()
 
-        let textRect = CGRect(x: sidePad, y: textOriginY, width: maxTextWidth, height: textBlockHeight + fontSize * 0.3)
-        let framePath = CGPath(rect: textRect, transform: nil)
-        let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: 0), framePath, nil)
-        CTFrameDraw(frame, ctx)
+        // --- Draw text inside pill ---
+        ctx.saveGState()
+        let textRect = CGRect(
+            x: pillLeft + pillPadX,
+            y: pillBottom + pillPadY,
+            width: textW + 4,  // small extra to avoid clipping last glyph
+            height: textBlockH + fontSize * 0.15
+        )
+        let textFramePath = CGPath(rect: textRect, transform: nil)
+        let textFrame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: 0), textFramePath, nil)
+        CTFrameDraw(textFrame, ctx)
         ctx.restoreGState()
     }
 
