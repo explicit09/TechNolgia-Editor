@@ -6721,23 +6721,24 @@ final class MCPServer {
                 logoPath = brandLogoPath
             }
             if logoPath == nil {
-                logoPath = "/Users/tadies/Library/Containers/com.videoeditor.app/Data/Documents/technolgia_logo_clean.png"
+                logoPath = "/Users/tadies/Library/Containers/com.videoeditor.app/Data/Documents/technolgia_logo_tight.png"
             }
             if let lp = logoPath,
                FileManager.default.fileExists(atPath: lp),
                let data = FileManager.default.contents(atPath: lp),
                let provider = CGDataProvider(data: data as CFData),
                let logoImage = CGImage(pngDataProviderSource: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent) {
-                let logoMaxW: CGFloat = 200
+                let logoMaxW: CGFloat = 500
                 let logoNatW = CGFloat(logoImage.width)
                 let logoNatH = CGFloat(logoImage.height)
                 let scale = logoMaxW / logoNatW
                 let drawW = logoMaxW
                 let drawH = logoNatH * scale
-                let margin: CGFloat = 40
-                let x = canvasW - drawW - margin
-                // CGContext y=0 is at bottom; top-right means y = canvasH - drawH - margin
-                let y = canvasH - drawH - margin
+                let marginX: CGFloat = 24
+                let marginY: CGFloat = 20
+                // Top-right corner, tight to the edges
+                let x = canvasW - drawW - marginX
+                let y = canvasH - drawH - marginY
                 // No shadow — CGContext.setShadow renders as a dark rectangle for
                 // transparent PNGs instead of following the alpha shape. The logo
                 // has enough contrast on its own against the video background.
@@ -6842,7 +6843,9 @@ final class MCPServer {
         let pillPadX: CGFloat = 40   // horizontal padding inside pill on each side
         let pillPadY: CGFloat = 24   // vertical padding inside pill on each side
         let cornerRadius: CGFloat = 24
-        let pillBottom: CGFloat = 120  // pill bottom edge from canvas bottom (CGContext y=0 at bottom)
+        // Vertical center: pill's bottom y is set so the pill is centered in the canvas.
+        // CGContext y=0 is at bottom, so center y = (canvasH - pillH) / 2.
+        // Computed after pillH is known.
 
         // Text: already uppercased and truncated by caller (max 24 chars)
         let upperText = text.uppercased()
@@ -6892,10 +6895,11 @@ final class MCPServer {
         )
         let textW = min(fitSize.width, maxPillTextWidth)
 
-        // Pill geometry — horizontally centered in the canvas
+        // Pill geometry — horizontally AND vertically centered in the canvas
         let pillW = textW + pillPadX * 2
         let pillH = textBlockH + pillPadY * 2
-        let pillLeft = (canvasWidth - pillW) / 2  // center horizontally
+        let pillLeft = (canvasWidth - pillW) / 2
+        let pillBottom = (canvasHeight - pillH) / 2  // vertical center
 
         let pillRect = CGRect(
             x: pillLeft,
