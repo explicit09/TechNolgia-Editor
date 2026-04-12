@@ -15,6 +15,10 @@ public struct BroadcastOverlayConfig: Codable, Sendable, Equatable {
     public var topics: [TimedEntry]
     public var chapters: [TimedEntry]
     public var style: OverlayStyle
+    /// When true, only the minimal brand bar (show name + thin gold accent line) is rendered.
+    /// All other overlay elements (title card, chapters, ticker, host strip) are suppressed.
+    /// Defaults to false so existing 16:9 exports are unaffected.
+    public var shortFormMode: Bool
 
     public init(
         isEnabled: Bool = false,
@@ -25,7 +29,8 @@ public struct BroadcastOverlayConfig: Codable, Sendable, Equatable {
         sponsors: [String] = [],
         topics: [TimedEntry] = [],
         chapters: [TimedEntry] = [],
-        style: OverlayStyle = .default
+        style: OverlayStyle = .default,
+        shortFormMode: Bool = false
     ) {
         self.isEnabled = isEnabled
         self.episodeTitle = episodeTitle
@@ -36,6 +41,27 @@ public struct BroadcastOverlayConfig: Codable, Sendable, Equatable {
         self.topics = topics
         self.chapters = chapters
         self.style = style
+        self.shortFormMode = shortFormMode
+    }
+
+    // MARK: - Codable (manual, for decodeIfPresent on shortFormMode)
+    enum CodingKeys: String, CodingKey {
+        case isEnabled, episodeTitle, episodeSubtitle, hostA, hostB
+        case sponsors, topics, chapters, style, shortFormMode
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        isEnabled       = try c.decode(Bool.self, forKey: .isEnabled)
+        episodeTitle    = try c.decodeIfPresent(String.self, forKey: .episodeTitle) ?? ""
+        episodeSubtitle = try c.decodeIfPresent(String.self, forKey: .episodeSubtitle) ?? ""
+        hostA           = try c.decodeIfPresent(HostInfo.self, forKey: .hostA) ?? HostInfo()
+        hostB           = try c.decodeIfPresent(HostInfo.self, forKey: .hostB) ?? HostInfo()
+        sponsors        = try c.decodeIfPresent([String].self, forKey: .sponsors) ?? []
+        topics          = try c.decodeIfPresent([TimedEntry].self, forKey: .topics) ?? []
+        chapters        = try c.decodeIfPresent([TimedEntry].self, forKey: .chapters) ?? []
+        style           = try c.decodeIfPresent(OverlayStyle.self, forKey: .style) ?? .default
+        shortFormMode   = try c.decodeIfPresent(Bool.self, forKey: .shortFormMode) ?? false
     }
 
     public static let empty = BroadcastOverlayConfig()

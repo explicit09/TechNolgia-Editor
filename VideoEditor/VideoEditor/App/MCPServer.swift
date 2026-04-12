@@ -3135,7 +3135,22 @@ final class MCPServer {
         appState.context.timelineState.shortFormConfig = config
         appState.rebuildCompositionNow()
 
-        return "Short-form layout applied. Output: \(config.outputAspect.size.width)x\(config.outputAspect.size.height). Layout: \(config.layoutSegments.first?.layout ?? .split). Faces tracked: \(config.faceTracks.count)."
+        // Auto-switch broadcast overlay to short-form mode (minimal brand bar only).
+        // If an overlay config exists and is enabled, flip shortFormMode=true.
+        // If no overlay config exists, create a minimal enabled one in short-form mode.
+        if var overlay = appState.context.timelineState.broadcastOverlay {
+            if !overlay.shortFormMode {
+                overlay.shortFormMode = true
+                overlay.isEnabled = true
+                appState.context.timelineState.broadcastOverlay = overlay
+            }
+        } else {
+            let brandBar = BroadcastOverlayConfig(isEnabled: true, shortFormMode: true)
+            appState.context.timelineState.broadcastOverlay = brandBar
+        }
+        appState.rebuildCompositionNow()
+
+        return "Short-form layout applied. Output: \(config.outputAspect.size.width)x\(config.outputAspect.size.height). Layout: \(config.layoutSegments.first?.layout ?? .split). Faces tracked: \(config.faceTracks.count). Brand bar overlay activated."
     }
 
     // MARK: - Overlay Config

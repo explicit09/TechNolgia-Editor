@@ -30,11 +30,8 @@ Before any formatting work:
 
 **DO NOT use `auto_reframe` for multi-speaker content.** `auto_reframe` averages face tracks into ONE static crop — fine for a single person, broken for podcasts/interviews where speakers move or alternate.
 
-### 1a. Disable any broadcast overlay from prior sessions
-```
-set_overlay_config enabled=false
-```
-This prevents leftover Technologia Talks / lower-third graphics from rendering over your vertical clip.
+### 1a. Leave the broadcast overlay enabled
+Do NOT call `set_overlay_config enabled=false`. `create_short` automatically switches the overlay to **short-form mode** — this renders only a minimal brand bar (show name + gold accent line at the very bottom of the frame). No chapters, sponsors, title cards, or host strips are shown. This keeps brand identity consistent across all shorts without cluttering the vertical frame.
 
 ### 1b. Route by subject count
 

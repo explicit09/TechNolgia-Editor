@@ -31,19 +31,76 @@ public struct BroadcastOverlayRenderer {
 
         ctx.clear(CGRect(x: 0, y: 0, width: w, height: h))
 
-        let st = config.style
-        let fps: Double = 30
-        let frame = time * fps
+        if config.shortFormMode {
+            // Short-form mode: only render the minimal brand signature bar
+            drawShortFormBrandBar(ctx: ctx, config: config, size: renderSize)
+        } else {
+            let fps: Double = 30
+            let frame = time * fps
 
-        // Draw layers bottom to top (CGContext y=0 is bottom of screen)
-        drawSmartTicker(ctx: ctx, config: config, time: time, frame: frame, fps: fps, s: s, size: renderSize)
-        drawHostNameBar(ctx: ctx, config: config, time: time, frame: frame, fps: fps, s: s, size: renderSize)
-        drawHostIntroStrip(ctx: ctx, config: config, time: time, s: s, size: renderSize)
-        drawEpisodeTitleCard(ctx: ctx, config: config, time: time, s: s, size: renderSize)
-        drawChapterCard(ctx: ctx, config: config, time: time, s: s, size: renderSize)
+            // Draw layers bottom to top (CGContext y=0 is bottom of screen)
+            drawSmartTicker(ctx: ctx, config: config, time: time, frame: frame, fps: fps, s: s, size: renderSize)
+            drawHostNameBar(ctx: ctx, config: config, time: time, frame: frame, fps: fps, s: s, size: renderSize)
+            drawHostIntroStrip(ctx: ctx, config: config, time: time, s: s, size: renderSize)
+            drawEpisodeTitleCard(ctx: ctx, config: config, time: time, s: s, size: renderSize)
+            drawChapterCard(ctx: ctx, config: config, time: time, s: s, size: renderSize)
+        }
 
         guard let cgImage = ctx.makeImage() else { return nil }
         return CIImage(cgImage: cgImage)
+    }
+}
+
+// MARK: - Short-Form Brand Bar
+// Minimal brand signature for 9:16 vertical exports.
+// Sits at the very bottom of the frame (y = 0 in CG coords).
+// Height: ~80px at 1080x1920 reference so captions at fh*0.15 are never overlapped.
+// Elements: thin gold accent line on top, dark-navy translucent background, show name centered.
+
+extension BroadcastOverlayRenderer {
+
+    static func drawShortFormBrandBar(
+        ctx: CGContext, config: BroadcastOverlayConfig, size: CGSize
+    ) {
+        // Reference is 1080-wide (9:16 output). Scale relative to output width.
+        let s = size.width / 1080.0
+
+        let st = config.style
+        let gold  = OverlayStyle.parseHex(st.goldHex)
+        let navy  = OverlayStyle.parseHex(st.darkNavyHex)
+
+        // Bar dimensions — stays under caption zone (captions at fh*0.15 ≈ 288px from bottom)
+        let barH: CGFloat = 80.0 * s
+        let accentH: CGFloat = 3.0 * s
+
+        // Position: y=0 is bottom of frame in CGContext
+        let barRect = CGRect(x: 0, y: 0, width: size.width, height: barH)
+
+        // Dark translucent background (navy at 90% opacity)
+        ctx.setFillColor(CGColor(red: navy.r, green: navy.g, blue: navy.b, alpha: 0.90))
+        ctx.fill(barRect)
+
+        // Gold accent line along the top of the bar
+        ctx.setFillColor(CGColor(red: gold.r, green: gold.g, blue: gold.b, alpha: 1.0))
+        ctx.fill(CGRect(x: 0, y: barH - accentH, width: size.width, height: accentH))
+
+        // Show name: prefer episodeTitle as show name, fall back to "TECHNOLOGIA TALKS"
+        let showName: String
+        if !config.episodeTitle.isEmpty {
+            showName = config.episodeTitle.uppercased()
+        } else {
+            showName = "TECHNOLOGIA TALKS"
+        }
+
+        let fontSize: CGFloat = 28.0 * s
+        let font = condensedFont(size: fontSize)
+        let textW = measureText(showName, font: font)
+        let textX = (size.width - textW) / 2
+        // Center vertically in the bar below the accent line
+        let textY = (barH - accentH) / 2 - fontSize * 0.3
+
+        let goldColor = CGColor(red: gold.r, green: gold.g, blue: gold.b, alpha: 1.0)
+        drawText(ctx: ctx, text: showName, x: textX, y: textY, font: font, color: goldColor)
     }
 }
 
