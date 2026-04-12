@@ -6707,22 +6707,44 @@ final class MCPServer {
         // 5a. Draw the face-tracked composed frame as background
         ctx.draw(composedCG, in: CGRect(x: 0, y: 0, width: canvasW, height: canvasH))
 
-        // 5b + 5c. Brand-color pill label at bottom-left
+        // 5b + 5c. Brand-color pill label at bottom-center
         renderShortPillLabel(ctx: ctx, text: pillLabelText,
                              canvasWidth: canvasW, canvasHeight: canvasH)
 
-        // 5d. Optional brand logo — bottom-right corner
-        if showBrand, let brand = loadThumbnailBrand(templateName: templateName).logoImage {
-            let logoMaxH: CGFloat = 60
-            let logoW = CGFloat(brand.width)
-            let logoH = CGFloat(brand.height)
-            let scale = logoMaxH / logoH
-            let drawW = logoW * scale
-            let drawH = logoMaxH
-            let margin: CGFloat = 32
-            let x = canvasW - drawW - margin
-            let y = margin
-            ctx.draw(brand, in: CGRect(x: x, y: y, width: drawW, height: drawH))
+        // 5d. TechNolgia logo — top-right corner, 200px wide, 40px from each edge
+        if showBrand {
+            // Determine logo path: template's brandLogoPath > hardcoded fallback
+            var logoPath: String? = nil
+            if let tName = templateName,
+               let templateData = loadOverlayTemplateJSON(tName),
+               let brandLogoPath = templateData["brandLogoPath"] as? String {
+                logoPath = brandLogoPath
+            }
+            if logoPath == nil {
+                logoPath = "/Users/tadies/Library/Containers/com.videoeditor.app/Data/Documents/technolgia_logo_nobg.png"
+            }
+            if let lp = logoPath,
+               FileManager.default.fileExists(atPath: lp),
+               let data = FileManager.default.contents(atPath: lp),
+               let provider = CGDataProvider(data: data as CFData),
+               let logoImage = CGImage(pngDataProviderSource: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent) {
+                let logoMaxW: CGFloat = 200
+                let logoNatW = CGFloat(logoImage.width)
+                let logoNatH = CGFloat(logoImage.height)
+                let scale = logoMaxW / logoNatW
+                let drawW = logoMaxW
+                let drawH = logoNatH * scale
+                let margin: CGFloat = 40
+                let x = canvasW - drawW - margin
+                // CGContext y=0 is at bottom; top-right means y = canvasH - drawH - margin
+                let y = canvasH - drawH - margin
+                ctx.saveGState()
+                ctx.setShadow(offset: CGSize(width: 3, height: -3), blur: 6,
+                              color: CGColor(red: 0, green: 0, blue: 0, alpha: 0.50))
+                ctx.draw(logoImage, in: CGRect(x: x, y: y, width: drawW, height: drawH))
+                ctx.restoreGState()
+            }
+            // If logo file is missing, skip gracefully — no error
         }
 
         // 5e. Export PNG
@@ -6784,11 +6806,11 @@ final class MCPServer {
         return words.last
     }
 
-    /// Render a TechNologia-style brand-color pill label at the bottom-left of the canvas.
+    /// Render a TechNologia-style brand-color pill label at the bottom-CENTER of the canvas.
     /// - Pill: brand gold (#C9A028) fill, 24px corner radius, auto-sized to text
     /// - Text: dark navy (#070D17), bold condensed font, UPPERCASE, 56-72pt fitted to 24-char max
     /// - Pill drop shadow: 8px blur, 4px offset, black at 50%
-    /// - Position: 48px from left edge, 120px from bottom edge
+    /// - Position: horizontally centered in frame, 120px from bottom edge
     private func renderShortPillLabel(ctx: CGContext, text: String,
                                       canvasWidth: CGFloat, canvasHeight: CGFloat) {
         // Brand colors
@@ -6821,7 +6843,6 @@ final class MCPServer {
         let pillPadX: CGFloat = 40   // horizontal padding inside pill on each side
         let pillPadY: CGFloat = 24   // vertical padding inside pill on each side
         let cornerRadius: CGFloat = 24
-        let pillLeft: CGFloat = 48   // pill left edge from canvas left
         let pillBottom: CGFloat = 120  // pill bottom edge from canvas bottom (CGContext y=0 at bottom)
 
         // Text: already uppercased and truncated by caller (max 24 chars)
@@ -6872,9 +6893,10 @@ final class MCPServer {
         )
         let textW = min(fitSize.width, maxPillTextWidth)
 
-        // Pill geometry
+        // Pill geometry — horizontally centered in the canvas
         let pillW = textW + pillPadX * 2
         let pillH = textBlockH + pillPadY * 2
+        let pillLeft = (canvasWidth - pillW) / 2  // center horizontally
 
         let pillRect = CGRect(
             x: pillLeft,
