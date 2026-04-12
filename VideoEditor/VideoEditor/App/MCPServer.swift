@@ -3409,7 +3409,10 @@ final class MCPServer {
             return "Error: Invalid asset_id"
         }
 
-        let maxMoments = args["max_moments"] as? Int ?? (args["max_moments"] as? Double).map({ Int($0) }) ?? 10
+        // Default cap high enough to return everything viral in a typical long podcast.
+        // The prompt instructs Claude to return EVERY qualifying moment up to this cap,
+        // not to pad the list. Reviewers curate afterward.
+        let maxMoments = args["max_moments"] as? Int ?? (args["max_moments"] as? Double).map({ Int($0) }) ?? 40
         let minDuration = args["min_duration_seconds"] as? Double ?? 15.0
         let maxDuration = args["max_duration_seconds"] as? Double ?? 60.0
 
@@ -3468,28 +3471,41 @@ final class MCPServer {
         let provider = ClaudeProvider(apiKey: apiKey, model: "claude-opus-4-6")
 
         let prompt = """
-        You are a social-media expert finding viral 15-60 second clips in a podcast/interview transcript.
+        You are a social-media expert finding EVERY genuinely viral \(Int(minDuration))-\(Int(maxDuration)) second clip in a podcast/interview transcript. Reviewers will curate afterward — your job is to surface all the good ones, not a short top-N.
 
-        You have access to a web_search tool. Before ranking moments, use it 1-3 times to check current trending topics relevant to the podcast (e.g., "what's trending in tech today", "top YouTube podcasts this week", recent news in AI/crypto/startups, viral social media discussions). Understanding what viewers are currently primed to engage with helps you boost moments that ride current waves.
+        You have access to a web_search tool. Use it 1-3 times to check current trending topics relevant to the podcast's themes (tech, AI, startups, crypto, culture, etc.) so you can flag moments that ride current waves.
 
-        Step 1 — Research: use web_search to check current trends relevant to the podcast's themes.
-        Step 2 — Rank: identify viral moments from the transcript, boosting any that reference currently trending people, products, events, or memes.
-        Step 3 — Output: return ONLY the JSON block described below.
+        Pipeline:
+        1. Research: web_search for current trending topics in this podcast's domain.
+        2. Extract: find EVERY moment that would make a viewer stop scrolling.
+        3. Score each on two independent axes (0-10):
+           - evergreen_score: works regardless of current trends (humor, vulnerability, surprise, contrarian takes, specific shocking numbers, quotable lines, back-and-forth tension, raw emotion). Think "still funny/shocking/interesting 5 years from now."
+           - trending_score: ties into what's trending NOW (check web_search). Extra value from timeliness.
+        4. Include a moment if EITHER score is ≥7, OR the combined score is ≥10. Do not drop strong evergreen content just because it isn't currently trending — classic roasts, personal confessions, and quotable humor are always viral.
+        5. Output: return ONLY the JSON block described below.
 
-        Criteria for "viral":
+        What counts as viral (evergreen signals):
         - Contrarian claims ("Most people think X, but actually Y")
-        - Surprising specific stats or numbers
-        - Quotable one-liners that punch on their own
-        - Emotional peaks (laughter, disbelief, frustration, excitement)
-        - Vulnerable confessions or strong opinions
-        - Back-and-forth debates between speakers
-        - Self-contained moments — a first-time viewer should get it without prior context
-        - References to currently trending topics, people, or products (check with web_search first)
+        - Surprising specific stats or numbers ("$100 billion negative")
+        - Quotable one-liners that punch standalone
+        - Laughter peaks, mic-drop moments, disbelief
+        - Vulnerable confessions ("biggest mistake I made")
+        - Strong opinions / hot takes
+        - Back-and-forth tension or roasts between hosts
+        - Self-contained story with setup → payoff
+
+        What counts as viral (trending signals):
+        - Names people are currently talking about (from web_search)
+        - Products/events in this week's news cycle
+        - Memes or discourse happening RIGHT NOW
 
         Exclude:
-        - Long monologues with no hook
-        - Context-heavy setups that need the whole podcast
+        - Long monologues without a hook
+        - Setups that need the whole podcast for context
         - Greetings, transitions, sponsor reads
+        - Moments where the hook is muddy or requires understanding prior segments
+
+        Target count: there is NO fixed count. Return EVERY moment that clears the threshold — could be 5, could be 30, depending on the transcript's density. A good 3-hour podcast typically has 10-25 genuinely viral moments. Do not pad with weak picks to hit a number, and do not under-report to stay conservative.
 
         The transcript is provided as a JSON array. Each element has:
         - "w": the word
@@ -3507,6 +3523,9 @@ final class MCPServer {
               "clip_start_time": 1234.5,
               "clip_end_time": 1278.2,
               "duration_seconds": 43.7,
+              "evergreen_score": 8,
+              "trending_score": 3,
+              "category": "evergreen" | "trending" | "both",
               "reasoning": "one sentence on why this is viral",
               "cold_open_recommended": true,
               "speakers_involved": ["0", "1"]
@@ -3519,8 +3538,9 @@ final class MCPServer {
         - clip_start_time must be the "s" value of the first word in the clip.
         - clip_end_time must be the "e" value of the last word in the clip.
         - Each clip must be between \(Int(minDuration)) and \(Int(maxDuration)) seconds (duration_seconds = clip_end_time - clip_start_time).
-        - Return exactly \(maxMoments) moments, ranked strongest first.
+        - Rank strongest first (by max(evergreen_score, trending_score), then by combined score).
         - Each clip must be a complete thought — don't cut mid-sentence.
+        - Hard cap: do not return more than \(maxMoments) moments even if more qualify — if the transcript has more, drop the weakest and note it in a "note" field.
 
         OUTPUT FORMAT REQUIREMENTS — read carefully:
         - Do your thinking silently. When ready, emit exactly ONE final JSON object wrapped in a ```json code block.
@@ -3565,7 +3585,7 @@ final class MCPServer {
             // Build human-readable summary
             var output = "=== VIRAL MOMENTS ===\n"
             output += "Asset: \(asset.name)\n"
-            output += "Requested: top \(maxMoments) moments (\(Int(minDuration))-\(Int(maxDuration))s)\n"
+            output += "Cap: \(maxMoments) moments (\(Int(minDuration))-\(Int(maxDuration))s)\n"
             output += "Found: \(moments.count) moments\n\n"
 
             for (index, moment) in moments.enumerated() {
@@ -3578,6 +3598,9 @@ final class MCPServer {
                 let speakersInvolved = (moment["speakers_involved"] as? [String] ?? []).joined(separator: ", ")
                 let approxStart = moment["approx_start_word"] as? String ?? ""
                 let approxEnd = moment["approx_end_word"] as? String ?? ""
+                let evergreen = moment["evergreen_score"] as? Int ?? (moment["evergreen_score"] as? Double).map({ Int($0) }) ?? 0
+                let trending = moment["trending_score"] as? Int ?? (moment["trending_score"] as? Double).map({ Int($0) }) ?? 0
+                let category = moment["category"] as? String ?? ""
 
                 let startFormatted = TranscriptAnalysisSupport.formatTimestamp(startTime)
                 let endFormatted = TranscriptAnalysisSupport.formatTimestamp(endTime)
@@ -3586,6 +3609,7 @@ final class MCPServer {
                 output += "  Start: [\(startFormatted)] (\(String(format: "%.2f", startTime))s)\n"
                 output += "  End:   [\(endFormatted)] (\(String(format: "%.2f", endTime))s)\n"
                 output += "  Duration: \(String(format: "%.1f", duration))s\n"
+                output += "  Scores: evergreen=\(evergreen)/10, trending=\(trending)/10\(category.isEmpty ? "" : " [\(category)]")\n"
                 output += "  Hook: \"\(hook)\"\n"
                 output += "  Opens with: \"\(approxStart)\"\n"
                 output += "  Closes with: \"\(approxEnd)\"\n"
