@@ -2,6 +2,7 @@ import Foundation
 import AVFoundation
 import AppKit
 import CoreImage
+import Vision
 import EditorCore
 import AIServices
 import Network
@@ -582,6 +583,19 @@ final class MCPServer {
                     ], "required": ["title"]],
                 ],
                 [
+                    "name": "generate_short_thumbnail",
+                    "description": "Generate a 1080x1920 (9:16) thumbnail for a YouTube Short / Reel / TikTok. Scores 8-12 frames in the source range and picks the best expression (smiling/laughing face, sharpness, central position). Renders hook text at the top with a thick stroke for readability, optionally adds a small brand logo in the corner.",
+                    "inputSchema": ["type": "object", "properties": [
+                        "asset_id": ["type": "string", "description": "UUID of the source asset"],
+                        "source_start": ["type": "number", "description": "Clip start time in source seconds"],
+                        "source_end": ["type": "number", "description": "Clip end time in source seconds"],
+                        "hook_text": ["type": "string", "description": "Hook / punchline text to overlay at the top (2-8 words ideal)"],
+                        "output_path": ["type": "string", "description": "Full path to write the PNG. Default: /tmp/short_thumbnail_{uuid}.png"],
+                        "show_brand": ["type": "boolean", "description": "Include small brand logo in the bottom corner (default: true)"],
+                        "template": ["type": "string", "description": "Overlay template name (e.g. 'technologia_talks') to load brand logo"],
+                    ], "required": ["asset_id", "source_start", "source_end", "hook_text"]],
+                ],
+                [
                     "name": "generate_carousel",
                     "description": "Generate Instagram carousel slides (1080x1080) using AI. Each slide gets a styled image with text. Uses Claude to write prompts, then FLUX Kontext and/or Gemini to generate.",
                     "inputSchema": ["type": "object", "properties": [
@@ -1033,6 +1047,9 @@ final class MCPServer {
 
         if name == "generate_thumbnail" {
             return await handleGenerateThumbnail(arguments, appState: appState)
+        }
+        if name == "generate_short_thumbnail" {
+            return await handleGenerateShortThumbnail(arguments, appState: appState)
         }
         if name == "generate_carousel" {
             return await handleGenerateCarousel(arguments, appState: appState)
@@ -6348,6 +6365,363 @@ final class MCPServer {
     private func resolveDocumentsPath(_ filename: String) -> String {
         let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return docsDir.appendingPathComponent(filename).path
+    }
+
+    // MARK: - Short Thumbnail Generation
+
+    /// Score a single frame for short-form thumbnail suitability.
+    /// Returns a composite score — higher is better.
+    private nonisolated func scoreShortFrame(_ image: CGImage) async -> Double {
+        var score: Double = 0
+
+        // 1. Face detection
+        let faceRequest = VNDetectFaceRectanglesRequest()
+        let handler = VNImageRequestHandler(cgImage: image, options: [:])
+        try? handler.perform([faceRequest])
+
+        guard let faces = faceRequest.results, !faces.isEmpty else {
+            // No face: sharpness only (much lower ceiling)
+            return estimateShortSharpness(image) * 10
+        }
+
+        // Face present: +5 base
+        score += 5
+
+        // Pick the largest / most centered face
+        let w = CGFloat(image.width)
+        let h = CGFloat(image.height)
+        let centerX: CGFloat = 0.5
+        let bestFace = faces.max { a, b in
+            let aArea = a.boundingBox.width * a.boundingBox.height
+            let bArea = b.boundingBox.width * b.boundingBox.height
+            return aArea < bArea
+        }!
+
+        let faceArea = Double(bestFace.boundingBox.width * bestFace.boundingBox.height)
+        score += faceArea * 20  // larger face = better thumbnail
+
+        // Central position bonus — penalize faces near the edge
+        let faceCenterX = Double(bestFace.boundingBox.midX)
+        let edgePenalty = abs(faceCenterX - Double(centerX)) * 10
+        score -= edgePenalty
+
+        // 2. Landmarks: mouth openness + eyes open
+        let landmarkRequest = VNDetectFaceLandmarksRequest()
+        // Limit to the bounding box of the best face
+        landmarkRequest.inputFaceObservations = [bestFace]
+        try? handler.perform([landmarkRequest])
+
+        if let obs = landmarkRequest.results?.first {
+            // Mouth openness
+            if let outerLips = obs.landmarks?.outerLips?.normalizedPoints, outerLips.count >= 4 {
+                let ys = outerLips.map { Double($0.y) }
+                let lipRange = (ys.max() ?? 0) - (ys.min() ?? 0)
+                // Range >0.15 = noticeably open (smiling/laughing)
+                score += lipRange * 30   // up to ~7.5 pts for fully open mouth
+            }
+
+            // Eyes open — check vertical range of each eye landmark
+            func eyeOpenness(_ region: VNFaceLandmarkRegion2D?) -> Double {
+                guard let pts = region?.normalizedPoints, pts.count >= 4 else { return 0 }
+                let ys = pts.map { Double($0.y) }
+                return (ys.max() ?? 0) - (ys.min() ?? 0)
+            }
+            let leftOpen = eyeOpenness(obs.landmarks?.leftEye)
+            let rightOpen = eyeOpenness(obs.landmarks?.rightEye)
+            let eyeScore = (leftOpen + rightOpen) / 2.0
+            score += eyeScore * 20   // bonus for open eyes
+        }
+
+        // 3. Sharpness
+        let sharpness = estimateShortSharpness(image)
+        score += sharpness * 15
+
+        // 4. Brightness — prefer well-exposed frames
+        let ciImage = CIImage(cgImage: image)
+        let centerRect = CGRect(x: w * 0.25, y: h * 0.25, width: w * 0.5, height: h * 0.5)
+        let cropped = ciImage.cropped(to: centerRect)
+        if let avgFilter = CIFilter(name: "CIAreaAverage", parameters: [
+            kCIInputImageKey: cropped,
+            "inputExtent": CIVector(cgRect: centerRect),
+        ]), let output = avgFilter.outputImage {
+            var pixel = [UInt8](repeating: 0, count: 4)
+            CIContext().render(output, toBitmap: &pixel, rowBytes: 4,
+                               bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
+                               format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
+            let brightness = Double(pixel[0]) / 255.0
+            if brightness >= 0.2 && brightness <= 0.8 { score += 5 }
+        }
+
+        return score
+    }
+
+    private nonisolated func estimateShortSharpness(_ image: CGImage) -> Double {
+        guard let data = image.dataProvider?.data,
+              let ptr = CFDataGetBytePtr(data) else { return 0.5 }
+        let width = image.width
+        let height = image.height
+        let bytesPerPixel = image.bitsPerPixel / 8
+        let bytesPerRow = image.bytesPerRow
+        var totalDiff: Double = 0
+        var samples = 0
+        let step = 4
+        for y in stride(from: 1, to: height - 1, by: step) {
+            for x in stride(from: 1, to: width - 1, by: step) {
+                let idx = y * bytesPerRow + x * bytesPerPixel
+                let left = Int(ptr[idx - bytesPerPixel])
+                let right = Int(ptr[idx + bytesPerPixel])
+                let current = Int(ptr[idx])
+                totalDiff += Double(abs(current - left) + abs(current - right))
+                samples += 1
+            }
+        }
+        guard samples > 0 else { return 0.5 }
+        return min((totalDiff / Double(samples) / 510.0) * 4, 1.0)
+    }
+
+    // swiftlint:disable:next function_body_length
+    private func handleGenerateShortThumbnail(_ args: [String: Any], appState: AppState) async -> String {
+        // --- Parse parameters ---
+        guard let assetIDStr = args["asset_id"] as? String,
+              let assetID = UUID(uuidString: assetIDStr),
+              let asset = appState.assets.first(where: { $0.id == assetID }) else {
+            return "Error: Invalid asset_id"
+        }
+        guard let sourceStart = args["source_start"] as? Double,
+              let sourceEnd = args["source_end"] as? Double,
+              sourceEnd > sourceStart else {
+            return "Error: source_start and source_end required; source_end must be > source_start"
+        }
+        guard let hookText = args["hook_text"] as? String, !hookText.isEmpty else {
+            return "Error: hook_text is required"
+        }
+
+        let showBrand = args["show_brand"] as? Bool ?? true
+        let templateName = args["template"] as? String
+
+        let outputPath: String
+        if let custom = args["output_path"] as? String {
+            outputPath = custom
+        } else {
+            outputPath = "/tmp/short_thumbnail_\(UUID().uuidString).png"
+        }
+
+        // --- Step 1: Sample 10 frames evenly across the source range ---
+        let sampleCount = 10
+        let duration = sourceEnd - sourceStart
+        let interval = duration / Double(sampleCount + 1)
+
+        let avAsset = AVURLAsset(url: asset.sourceURL)
+        let generator = AVAssetImageGenerator(asset: avAsset)
+        generator.appliesPreferredTrackTransform = true
+        // Use analysis resolution (640x360) to score quickly
+        generator.maximumSize = CGSize(width: 640, height: 360)
+
+        var bestImage: CGImage? = nil
+        var bestScore: Double = -1
+        var bestTime: Double = sourceStart
+
+        for i in 1...sampleCount {
+            let t = sourceStart + interval * Double(i)
+            let cmTime = CMTime(seconds: t, preferredTimescale: 600)
+            guard let cgImage = try? generator.copyCGImage(at: cmTime, actualTime: nil) else { continue }
+            let score = await scoreShortFrame(cgImage)
+            if score > bestScore {
+                bestScore = score
+                bestTime = t
+                bestImage = cgImage
+            }
+        }
+
+        guard bestImage != nil else {
+            return "Error: Could not extract any frames from asset in range \(sourceStart)-\(sourceEnd)s"
+        }
+
+        // --- Step 2: Re-extract best frame at full 1920x1080 resolution for compositing ---
+        generator.maximumSize = CGSize(width: 1920, height: 1080)
+        guard let fullResFrame = try? generator.copyCGImage(
+            at: CMTime(seconds: bestTime, preferredTimescale: 600),
+            actualTime: nil
+        ) else {
+            return "Error: Could not re-extract best frame at full resolution"
+        }
+
+        // --- Step 3: Render 1080x1920 PNG ---
+        let outW = 1080
+        let outH = 1920
+
+        guard let ctx = CGContext(
+            data: nil, width: outW, height: outH,
+            bitsPerComponent: 8, bytesPerRow: outW * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            return "Error: Could not create CGContext"
+        }
+
+        let canvasW = CGFloat(outW)
+        let canvasH = CGFloat(outH)
+
+        // 3a. Background: center-crop the 16:9 frame to fill 9:16.
+        //     The source frame is ~1920x1080. We need to show a 1080-wide strip
+        //     from the center of the 1920-wide image, scaled up to fill 1920 tall.
+        let frameW = CGFloat(fullResFrame.width)
+        let frameH = CGFloat(fullResFrame.height)
+
+        // Scale so that the frame fills the 1080-wide canvas horizontally:
+        //   scaledH = canvasW / frameW * frameH
+        // If scaledH < canvasH, we need to scale to fill height instead.
+        let scaleToFillW = canvasW / frameW
+        let scaleToFillH = canvasH / frameH
+        let bgScale = max(scaleToFillW, scaleToFillH)
+        let scaledW = frameW * bgScale
+        let scaledH = frameH * bgScale
+        let bgX = (canvasW - scaledW) / 2
+        let bgY = (canvasH - scaledH) / 2
+        ctx.draw(fullResFrame, in: CGRect(x: bgX, y: bgY, width: scaledW, height: scaledH))
+
+        // 3b. Dark gradient at the TOP (behind hook text) — so text is readable
+        let gradTop: CGFloat = 0
+        let gradBottom: CGFloat = canvasH * 0.30
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let darkOpaque = CGColor(red: 0, green: 0, blue: 0, alpha: 0.70)
+        let clearBlack = CGColor(red: 0, green: 0, blue: 0, alpha: 0)
+        if let grad = CGGradient(colorsSpace: colorSpace,
+                                  colors: [darkOpaque, clearBlack] as CFArray,
+                                  locations: [0, 1]) {
+            ctx.saveGState()
+            ctx.clip(to: CGRect(x: 0, y: canvasH - gradBottom, width: canvasW, height: gradBottom))
+            ctx.drawLinearGradient(grad,
+                                   start: CGPoint(x: 0, y: canvasH),
+                                   end: CGPoint(x: 0, y: canvasH - gradBottom),
+                                   options: [])
+            ctx.restoreGState()
+        }
+        _ = gradTop  // suppress unused-variable warning
+
+        // 3c. Hook text — bold condensed, centered, at top with ~80px margin from top
+        renderShortHookText(ctx: ctx, text: hookText, canvasWidth: canvasW, canvasHeight: canvasH)
+
+        // 3d. Optional brand logo — bottom-right corner
+        if showBrand, let brand = loadThumbnailBrand(templateName: templateName).logoImage {
+            let logoMaxH: CGFloat = 60
+            let logoW = CGFloat(brand.width)
+            let logoH = CGFloat(brand.height)
+            let scale = logoMaxH / logoH
+            let drawW = logoW * scale
+            let drawH = logoMaxH
+            let margin: CGFloat = 32
+            let x = canvasW - drawW - margin
+            let y = margin
+            ctx.draw(brand, in: CGRect(x: x, y: y, width: drawW, height: drawH))
+        }
+
+        // 3e. Export PNG
+        guard let cgFinal = ctx.makeImage() else {
+            return "Error: Could not finalize CGContext image"
+        }
+        let outputData = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(outputData as CFMutableData, "public.png" as CFString, 1, nil) else {
+            return "Error: Could not create image destination"
+        }
+        CGImageDestinationAddImage(dest, cgFinal, nil)
+        guard CGImageDestinationFinalize(dest) else {
+            return "Error: Could not write PNG"
+        }
+
+        let outputURL = URL(fileURLWithPath: outputPath)
+        try? FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(),
+                                                  withIntermediateDirectories: true)
+        do {
+            try (outputData as Data).write(to: outputURL)
+        } catch {
+            return "Error writing file: \(error.localizedDescription)"
+        }
+
+        return "Short thumbnail generated: \(outputPath)\nBest frame: \(String(format: "%.2f", bestTime))s (score=\(String(format: "%.1f", bestScore)))\nSize: \(outW)x\(outH)"
+    }
+
+    /// Render hook text onto a 9:16 canvas. Draws centered bold text at the top
+    /// with a thick black stroke for readability on any background.
+    private func renderShortHookText(ctx: CGContext, text: String, canvasWidth: CGFloat, canvasHeight: CGFloat) {
+        let sidePad: CGFloat = 60
+        let maxTextWidth = canvasWidth - sidePad * 2
+        let topMargin: CGFloat = 80  // distance from top of canvas to top of text block
+        let maxLines = 3
+
+        // Try BarlowCondensed-Black, fall back to HelveticaNeue-CondensedBold
+        let preferredFonts = ["BarlowCondensed-Black", "HelveticaNeue-CondensedBold", "Helvetica-Bold"]
+        var chosenFontName: CFString = "Helvetica-Bold" as CFString
+        for name in preferredFonts {
+            let test = CTFontCreateWithName(name as CFString, 80, nil)
+            // If the font name was actually loaded (not substituted to .AppleSystemUI), use it.
+            let actualName = CTFontCopyPostScriptName(test) as String
+            if actualName.lowercased().contains(name.lowercased().prefix(6).lowercased()) {
+                chosenFontName = name as CFString
+                break
+            }
+        }
+
+        // Auto-size: find the font size that makes the text fit in maxTextWidth within maxLines
+        var fontSize: CGFloat = 120
+        var finalFont = CTFontCreateWithName(chosenFontName, fontSize, nil)
+        let upperText = text.uppercased()
+
+        // Binary-search a good font size
+        var lo: CGFloat = 40
+        var hi: CGFloat = 160
+        for _ in 0..<10 {
+            let mid = (lo + hi) / 2
+            let f = CTFontCreateWithName(chosenFontName, mid, nil)
+            let lineCount = estimateLineCount(text: upperText, font: f, maxWidth: maxTextWidth)
+            if lineCount <= maxLines {
+                lo = mid
+            } else {
+                hi = mid
+            }
+        }
+        fontSize = lo
+        finalFont = CTFontCreateWithName(chosenFontName, fontSize, nil)
+
+        // Build attributed string with stroke for readability:
+        // negative strokeWidth = stroke + fill (NSAttributedString convention)
+        let strokeWidth: CGFloat = -6  // negative = both stroke and fill
+        let attrs: [CFString: Any] = [
+            kCTFontAttributeName: finalFont,
+            kCTForegroundColorAttributeName: CGColor(red: 1, green: 1, blue: 1, alpha: 1),  // white fill
+            kCTStrokeColorAttributeName: CGColor(red: 0, green: 0, blue: 0, alpha: 1),      // black stroke
+            kCTStrokeWidthAttributeName: strokeWidth,
+        ]
+
+        let attrString = CFAttributedStringCreate(nil, upperText as CFString, attrs as CFDictionary)!
+        let framesetter = CTFramesetterCreateWithAttributedString(attrString)
+
+        // Estimate height needed: lineCount * lineHeight
+        let lineCount = estimateLineCount(text: upperText, font: finalFont, maxWidth: maxTextWidth)
+        let lineHeight = CTFontGetAscent(finalFont) + CTFontGetDescent(finalFont) + CTFontGetLeading(finalFont)
+        let textBlockHeight = lineHeight * CGFloat(lineCount) + 20  // small extra padding
+
+        // In CGContext, y=0 is at the BOTTOM of the canvas.
+        // We want the text at the TOP — so y = canvasHeight - topMargin - textBlockHeight.
+        let textOriginY = canvasHeight - topMargin - textBlockHeight
+
+        let textRect = CGRect(x: sidePad, y: textOriginY, width: maxTextWidth, height: textBlockHeight + 20)
+        let framePath = CGPath(rect: textRect, transform: nil)
+        let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: 0), framePath, nil)
+        CTFrameDraw(frame, ctx)
+    }
+
+    /// Estimate how many lines the text will wrap into at the given font size and max width.
+    private func estimateLineCount(text: String, font: CTFont, maxWidth: CGFloat) -> Int {
+        let attrs: [CFString: Any] = [kCTFontAttributeName: font]
+        let attrStr = CFAttributedStringCreate(nil, text as CFString, attrs as CFDictionary)!
+        let framesetter = CTFramesetterCreateWithAttributedString(attrStr)
+        // Use a tall box to allow natural wrapping
+        let bigRect = CGRect(x: 0, y: 0, width: maxWidth, height: 10000)
+        let path = CGPath(rect: bigRect, transform: nil)
+        let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: 0), path, nil)
+        let lines = CTFrameGetLines(frame) as! [CTLine]
+        return max(lines.count, 1)
     }
 
     // MARK: - Helpers
