@@ -3364,6 +3364,44 @@ final class MCPServer {
 
     // MARK: - Find Viral Moments
 
+    /// Extract all balanced top-level {...} JSON objects from raw text that contain a "moments" key.
+    /// Handles Claude emitting multiple draft blocks — caller picks which one to use.
+    private static func extractJSONObjectsWithMomentsKey(from text: String) -> [String] {
+        var results: [String] = []
+        let chars = Array(text)
+        var i = 0
+        while i < chars.count {
+            guard chars[i] == "{" else { i += 1; continue }
+            // Find balanced close brace, respecting strings and escapes
+            var depth = 0
+            var inString = false
+            var escape = false
+            var end = -1
+            for j in i..<chars.count {
+                let c = chars[j]
+                if escape { escape = false; continue }
+                if c == "\\" { escape = true; continue }
+                if c == "\"" { inString.toggle(); continue }
+                if inString { continue }
+                if c == "{" { depth += 1 }
+                else if c == "}" {
+                    depth -= 1
+                    if depth == 0 { end = j; break }
+                }
+            }
+            if end > i {
+                let candidate = String(chars[i...end])
+                if candidate.contains("\"moments\"") {
+                    results.append(candidate)
+                }
+                i = end + 1
+            } else {
+                i += 1
+            }
+        }
+        return results
+    }
+
     private func handleFindViralMoments(_ args: [String: Any], appState: AppState) async -> String {
         guard let assetIDStr = args["asset_id"] as? String,
               let assetID = UUID(uuidString: assetIDStr),
@@ -3484,6 +3522,12 @@ final class MCPServer {
         - Return exactly \(maxMoments) moments, ranked strongest first.
         - Each clip must be a complete thought — don't cut mid-sentence.
 
+        OUTPUT FORMAT REQUIREMENTS — read carefully:
+        - Do your thinking silently. When ready, emit exactly ONE final JSON object wrapped in a ```json code block.
+        - Do NOT include multiple JSON blocks, revisions, or draft attempts. Only the final answer.
+        - No prose before or after the JSON block.
+        - Every moment must satisfy the duration constraint — re-check before emitting.
+
         Input transcript:
         \(wordJSON)
         """
@@ -3501,20 +3545,20 @@ final class MCPServer {
 
             let rawContent = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
 
-            // Parse the JSON response
-            // Claude may wrap in ```json ... ``` — strip that to extract the outermost JSON object
-            let jsonString: String
-            if let rangeStart = rawContent.range(of: "{"),
-               let rangeEnd = rawContent.range(of: "}", options: .backwards) {
-                jsonString = String(rawContent[rangeStart.lowerBound...rangeEnd.upperBound])
-            } else {
-                jsonString = rawContent
+            // Claude may emit multiple JSON blocks while thinking — extract ALL balanced {...}
+            // blocks and try each in reverse (the LAST one is Claude's final answer).
+            let candidates = Self.extractJSONObjectsWithMomentsKey(from: rawContent)
+            var moments: [[String: Any]] = []
+            for candidate in candidates.reversed() {
+                if let data = candidate.data(using: .utf8),
+                   let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let parsedMoments = parsed["moments"] as? [[String: Any]],
+                   !parsedMoments.isEmpty {
+                    moments = parsedMoments
+                    break
+                }
             }
-
-            guard let jsonData = jsonString.data(using: .utf8),
-                  let parsed = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-                  let moments = parsed["moments"] as? [[String: Any]] else {
-                // Return raw Claude response if JSON parsing fails
+            guard !moments.isEmpty else {
                 return "=== VIRAL MOMENTS ===\nAsset: \(asset.name)\n\nCould not parse structured JSON. Raw Claude response:\n\n\(rawContent)"
             }
 
@@ -3554,7 +3598,10 @@ final class MCPServer {
             }
 
             // Also append the raw JSON at the end for programmatic consumers
-            output += "---\nRAW JSON:\n\(jsonString)\n"
+            if let data = try? JSONSerialization.data(withJSONObject: ["moments": moments], options: .prettyPrinted),
+               let pretty = String(data: data, encoding: .utf8) {
+                output += "---\nRAW JSON:\n\(pretty)\n"
+            }
 
             return output
         } catch {
