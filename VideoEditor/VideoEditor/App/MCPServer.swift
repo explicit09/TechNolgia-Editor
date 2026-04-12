@@ -593,6 +593,7 @@ final class MCPServer {
                         "output_path": ["type": "string", "description": "Full path to write the PNG. Default: /tmp/short_thumbnail_{uuid}.png"],
                         "show_brand": ["type": "boolean", "description": "Include small brand logo in the bottom corner (default: true)"],
                         "template": ["type": "string", "description": "Overlay template name (e.g. 'technologia_talks') to load brand logo"],
+                        "highlight_word": ["type": "string", "description": "Optional word (or short phrase) to highlight in bright gold. If omitted, auto-picked via heuristic (last number, proper noun, emotional keyword, or final word)."],
                     ], "required": ["asset_id", "source_start", "source_end", "hook_text"]],
                 ],
                 [
@@ -6498,6 +6499,7 @@ final class MCPServer {
 
         let showBrand = args["show_brand"] as? Bool ?? true
         let templateName = args["template"] as? String
+        let highlightWordArg = args["highlight_word"] as? String
 
         let outputPath: String
         if let custom = args["output_path"] as? String {
@@ -6584,39 +6586,36 @@ final class MCPServer {
                 for i in 0..<faceTracks.count { speakerToFace[i] = i }
             }
 
-            // Decide layout: fill for dominant monologue (≥80%), split for dialogue
-            var layoutSegments: [LayoutSegment] = [LayoutSegment(startTime: 0, layout: .split)]
-            if let transcriptResult = await appState.media.transcriptionService.getTranscript(
-                for: asset, bundleURL: appState.projectBundleURL
-            ), let allSpeakers = transcriptResult.speakers, !allSpeakers.isEmpty {
-                let clippedSpeakers = allSpeakers.compactMap { seg -> SpeakerSegment? in
-                    let segStart = max(seg.range.start, sourceStart)
-                    let segEnd = min(seg.range.end, sourceEnd)
-                    guard segEnd > segStart else { return nil }
-                    return SpeakerSegment(speakerID: seg.speakerID,
-                                         range: TimeRange(start: segStart - sourceStart,
-                                                          end: segEnd - sourceStart))
+            // Thumbnails always use fill layout — a single large face is more scroll-stopping.
+            // Pick the most dominant speaker's face index.
+            var bestFaceIdx = 0
+            if !speakerToFace.isEmpty {
+                // Try to determine dominant speaker from transcript
+                if let transcriptResult = await appState.media.transcriptionService.getTranscript(
+                    for: asset, bundleURL: appState.projectBundleURL
+                ), let allSpeakers = transcriptResult.speakers, !allSpeakers.isEmpty {
+                    let clippedSpeakers = allSpeakers.compactMap { seg -> SpeakerSegment? in
+                        let segStart = max(seg.range.start, sourceStart)
+                        let segEnd = min(seg.range.end, sourceEnd)
+                        guard segEnd > segStart else { return nil }
+                        return SpeakerSegment(speakerID: seg.speakerID,
+                                             range: TimeRange(start: segStart - sourceStart,
+                                                              end: segEnd - sourceStart))
+                    }
+                    var perSpeaker: [Int: Double] = [:]
+                    for seg in clippedSpeakers {
+                        let sid = Int(seg.speakerID.filter(\.isNumber)) ?? 0
+                        perSpeaker[sid, default: 0] += seg.range.end - seg.range.start
+                    }
+                    if let (dominantSpeaker, _) = perSpeaker.max(by: { $0.value < $1.value }) {
+                        bestFaceIdx = speakerToFace[dominantSpeaker] ?? dominantSpeaker
+                    }
+                } else {
+                    // No transcript — use face 0 (or the first mapped face)
+                    bestFaceIdx = speakerToFace[0] ?? 0
                 }
-                let totalDur = clippedSpeakers.reduce(0.0) { $0 + ($1.range.end - $1.range.start) }
-                var perSpeaker: [Int: Double] = [:]
-                for seg in clippedSpeakers {
-                    let sid = Int(seg.speakerID.filter(\.isNumber)) ?? 0
-                    perSpeaker[sid, default: 0] += seg.range.end - seg.range.start
-                }
-                if totalDur > 0,
-                   let (dominantSpeaker, dur) = perSpeaker.max(by: { $0.value < $1.value }),
-                   dur / totalDur >= 0.8 {
-                    let faceIdx = speakerToFace[dominantSpeaker] ?? dominantSpeaker
-                    layoutSegments = [LayoutSegment(startTime: 0, layout: .fill(activeSpeaker: faceIdx))]
-                } else if !clippedSpeakers.isEmpty {
-                    let decider = LayoutDecider()
-                    layoutSegments = decider.decide(speakerSegments: clippedSpeakers,
-                                                    speakerToFace: speakerToFace)
-                }
-            } else if faceTracks.count == 1 {
-                // Single face, no transcript — fill on that face
-                layoutSegments = [LayoutSegment(startTime: 0, layout: .fill(activeSpeaker: 0))]
             }
+            let layoutSegments: [LayoutSegment] = [LayoutSegment(startTime: 0, layout: .fill(activeSpeaker: bestFaceIdx))]
 
             shortFormConfig = ShortFormConfig(
                 isEnabled: true,
@@ -6681,25 +6680,9 @@ final class MCPServer {
         // 5a. Draw the face-tracked composed frame as background
         ctx.draw(composedCG, in: CGRect(x: 0, y: 0, width: canvasW, height: canvasH))
 
-        // 5b. Dark gradient at the TOP (behind hook text) — so text is readable
-        let gradBottom: CGFloat = canvasH * 0.30
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
-        let darkOpaque = CGColor(red: 0, green: 0, blue: 0, alpha: 0.70)
-        let clearBlack = CGColor(red: 0, green: 0, blue: 0, alpha: 0)
-        if let grad = CGGradient(colorsSpace: colorSpace,
-                                  colors: [darkOpaque, clearBlack] as CFArray,
-                                  locations: [0, 1]) {
-            ctx.saveGState()
-            ctx.clip(to: CGRect(x: 0, y: canvasH - gradBottom, width: canvasW, height: gradBottom))
-            ctx.drawLinearGradient(grad,
-                                   start: CGPoint(x: 0, y: canvasH),
-                                   end: CGPoint(x: 0, y: canvasH - gradBottom),
-                                   options: [])
-            ctx.restoreGState()
-        }
-
-        // 5c. Hook text — bold condensed, centered, at top with ~80px margin from top
-        renderShortHookText(ctx: ctx, text: hookText, canvasWidth: canvasW, canvasHeight: canvasH)
+        // 5b + 5c. Hook text with tight scrim behind it (scrim drawn inside renderShortHookText)
+        renderShortHookText(ctx: ctx, text: hookText, highlightWord: highlightWordArg,
+                            canvasWidth: canvasW, canvasHeight: canvasH)
 
         // 5d. Optional brand logo — bottom-right corner
         if showBrand, let brand = loadThumbnailBrand(templateName: templateName).logoImage {
@@ -6740,74 +6723,156 @@ final class MCPServer {
         return "Short thumbnail generated: \(outputPath)\nBest frame: \(String(format: "%.2f", bestTime))s (score=\(String(format: "%.1f", bestScore)))\nLayout: \(layoutDescription)\nSize: \(outW)x\(outH)"
     }
 
-    /// Render hook text onto a 9:16 canvas. Draws centered bold text at the top
-    /// with a thick black stroke for readability on any background.
-    private func renderShortHookText(ctx: CGContext, text: String, canvasWidth: CGFloat, canvasHeight: CGFloat) {
+    /// Auto-pick a word from the hook to highlight in gold.
+    /// Priority: last number-like word → last proper noun (non-first) → emotional keyword → last word.
+    private func pickHighlightWord(_ hook: String) -> String? {
+        let words = hook.split(separator: " ").map(String.init)
+        guard !words.isEmpty else { return nil }
+        let magnitudeWords: Set<String> = ["BILLION", "MILLION", "THOUSAND", "HUNDRED"]
+        // 1. Last number-like word (contains a digit, or is a magnitude word)
+        if let numWord = words.reversed().first(where: {
+            $0.contains(where: \.isNumber) || magnitudeWords.contains($0.uppercased())
+        }) {
+            return numWord
+        }
+        // 2. Last proper noun (capitalized, not the first word, length > 2)
+        if words.count > 1,
+           let propn = words.dropFirst().reversed().first(where: {
+               $0.first?.isUppercase == true && $0.count > 2
+           }) {
+            return propn
+        }
+        // 3. Emotional keyword
+        let emotional: Set<String> = [
+            "NEVER", "ACTUALLY", "DAD", "MOM", "WIFE", "HUSBAND",
+            "BROKE", "DIED", "KILLED", "FIRED", "DESTROYED", "SECRET",
+            "BEST", "WORST", "ALL", "EVERY", "NOTHING", "NONE"
+        ]
+        if let emo = words.reversed().first(where: {
+            emotional.contains($0.uppercased().trimmingCharacters(in: .punctuationCharacters))
+        }) {
+            return emo
+        }
+        // 4. Fallback: last word
+        return words.last
+    }
+
+    /// Render hook text onto a 9:16 canvas using Opus Clip / MrBeast style:
+    /// - BarlowCondensed-Black (or fallback) at huge size (85-200pt)
+    /// - White fill, gold highlight word, thick black stroke, drop shadow
+    /// - Tight semi-transparent scrim only behind the text block
+    private func renderShortHookText(ctx: CGContext, text: String,
+                                     highlightWord: String?,
+                                     canvasWidth: CGFloat, canvasHeight: CGFloat) {
         let sidePad: CGFloat = 60
         let maxTextWidth = canvasWidth - sidePad * 2
         let topMargin: CGFloat = 80  // distance from top of canvas to top of text block
         let maxLines = 3
 
-        // Try BarlowCondensed-Black, fall back to HelveticaNeue-CondensedBold
-        let preferredFonts = ["BarlowCondensed-Black", "HelveticaNeue-CondensedBold", "Helvetica-Bold"]
-        var chosenFontName: CFString = "Helvetica-Bold" as CFString
+        // Font fallback chain: BarlowCondensed-Black → Anton-Regular → Impact → HelveticaNeue-CondensedBlack → Helvetica-Bold
+        let preferredFonts = [
+            "BarlowCondensed-Black",
+            "Anton-Regular",
+            "Impact",
+            "HelveticaNeue-CondensedBlack",
+            "Helvetica-Bold"
+        ]
+        var chosenFontName = "Helvetica-Bold"
         for name in preferredFonts {
             let test = CTFontCreateWithName(name as CFString, 80, nil)
-            // If the font name was actually loaded (not substituted to .AppleSystemUI), use it.
             let actualName = CTFontCopyPostScriptName(test) as String
-            if actualName.lowercased().contains(name.lowercased().prefix(6).lowercased()) {
-                chosenFontName = name as CFString
+            // Verify the font actually loaded (not substituted to system UI)
+            if actualName.lowercased().contains(String(name.lowercased().prefix(5))) {
+                chosenFontName = name
                 break
             }
         }
 
-        // Auto-size: find the font size that makes the text fit in maxTextWidth within maxLines
-        var fontSize: CGFloat = 120
-        var finalFont = CTFontCreateWithName(chosenFontName, fontSize, nil)
         let upperText = text.uppercased()
 
-        // Binary-search a good font size
-        var lo: CGFloat = 40
-        var hi: CGFloat = 160
-        for _ in 0..<10 {
+        // Binary-search the largest font size that fits within maxLines.
+        // Range: 85pt (min) to 200pt (max).
+        var lo: CGFloat = 85
+        var hi: CGFloat = 200
+        for _ in 0..<12 {
             let mid = (lo + hi) / 2
-            let f = CTFontCreateWithName(chosenFontName, mid, nil)
-            let lineCount = estimateLineCount(text: upperText, font: f, maxWidth: maxTextWidth)
-            if lineCount <= maxLines {
-                lo = mid
-            } else {
-                hi = mid
+            let f = CTFontCreateWithName(chosenFontName as CFString, mid, nil)
+            let lc = estimateLineCount(text: upperText, font: f, maxWidth: maxTextWidth)
+            if lc <= maxLines { lo = mid } else { hi = mid }
+        }
+        let fontSize = max(lo, 85)
+        let finalFont = CTFontCreateWithName(chosenFontName as CFString, fontSize, nil)
+
+        // Determine which word to highlight
+        let resolvedHighlight: String? = highlightWord ?? pickHighlightWord(text)
+
+        // Build NSMutableAttributedString for per-word color + stroke
+        let attrString = NSMutableAttributedString(string: upperText)
+        let fullRange = NSRange(location: 0, length: attrString.length)
+
+        // Tight letter spacing: tracking -2% of font size in points (negative kern)
+        let kernValue = fontSize * -0.02
+
+        attrString.addAttribute(.font,            value: finalFont, range: fullRange)
+        attrString.addAttribute(.foregroundColor, value: NSColor.white, range: fullRange)
+        // Negative strokeWidth = stroke + fill simultaneously
+        attrString.addAttribute(.strokeWidth,     value: NSNumber(value: -6.0), range: fullRange)
+        attrString.addAttribute(.strokeColor,     value: NSColor.black, range: fullRange)
+        attrString.addAttribute(.kern,            value: NSNumber(value: Float(kernValue)), range: fullRange)
+
+        // Apply gold highlight to the matched word
+        if let hw = resolvedHighlight {
+            let nsUpper = upperText as NSString
+            let searchRange = nsUpper.range(of: hw.uppercased(),
+                                            options: [.caseInsensitive, .diacriticInsensitive])
+            if searchRange.location != NSNotFound {
+                let gold = NSColor(red: 1.0, green: 0.843, blue: 0.0, alpha: 1.0) // #FFD700
+                attrString.addAttribute(.foregroundColor, value: gold, range: searchRange)
             }
         }
-        fontSize = lo
-        finalFont = CTFontCreateWithName(chosenFontName, fontSize, nil)
 
-        // Build attributed string with stroke for readability:
-        // negative strokeWidth = stroke + fill (NSAttributedString convention)
-        let strokeWidth: CGFloat = -6  // negative = both stroke and fill
-        let attrs: [CFString: Any] = [
-            kCTFontAttributeName: finalFont,
-            kCTForegroundColorAttributeName: CGColor(red: 1, green: 1, blue: 1, alpha: 1),  // white fill
-            kCTStrokeColorAttributeName: CGColor(red: 0, green: 0, blue: 0, alpha: 1),      // black stroke
-            kCTStrokeWidthAttributeName: strokeWidth,
-        ]
+        // Paragraph style: tight line spacing (0.95x line height)
+        let paraStyle = NSMutableParagraphStyle()
+        paraStyle.alignment = .center
+        paraStyle.lineHeightMultiple = 0.95
+        attrString.addAttribute(.paragraphStyle, value: paraStyle, range: fullRange)
 
-        let attrString = CFAttributedStringCreate(nil, upperText as CFString, attrs as CFDictionary)!
-        let framesetter = CTFramesetterCreateWithAttributedString(attrString)
-
-        // Estimate height needed: lineCount * lineHeight
+        // Measure block height using CTFramesetter
+        let framesetter = CTFramesetterCreateWithAttributedString(attrString as CFAttributedString)
         let lineCount = estimateLineCount(text: upperText, font: finalFont, maxWidth: maxTextWidth)
-        let lineHeight = CTFontGetAscent(finalFont) + CTFontGetDescent(finalFont) + CTFontGetLeading(finalFont)
-        let textBlockHeight = lineHeight * CGFloat(lineCount) + 20  // small extra padding
+        let lineHeight = (CTFontGetAscent(finalFont) + CTFontGetDescent(finalFont) + CTFontGetLeading(finalFont)) * 0.95
+        let textBlockHeight = lineHeight * CGFloat(lineCount) + fontSize * 0.2 // small padding
 
-        // In CGContext, y=0 is at the BOTTOM of the canvas.
-        // We want the text at the TOP — so y = canvasHeight - topMargin - textBlockHeight.
+        // CGContext y=0 is at the BOTTOM; text block sits at the TOP
         let textOriginY = canvasHeight - topMargin - textBlockHeight
 
-        let textRect = CGRect(x: sidePad, y: textOriginY, width: maxTextWidth, height: textBlockHeight + 20)
+        // --- Draw tight scrim behind text block ---
+        let scrimPadX: CGFloat = 50  // scrim extends ~50px beyond text each side
+        let scrimPadY: CGFloat = 30
+        let scrimRect = CGRect(
+            x: sidePad - scrimPadX,
+            y: textOriginY - scrimPadY,
+            width: maxTextWidth + scrimPadX * 2,
+            height: textBlockHeight + scrimPadY * 2
+        )
+        ctx.saveGState()
+        ctx.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.40))
+        let scrimPath = CGPath(roundedRect: scrimRect, cornerWidth: 18, cornerHeight: 18, transform: nil)
+        ctx.addPath(scrimPath)
+        ctx.fillPath()
+        ctx.restoreGState()
+
+        // --- Draw text with drop shadow ---
+        ctx.saveGState()
+        // Drop shadow: 6px blur, 4px offset downward (negative y in CG coords), 70% black
+        ctx.setShadow(offset: CGSize(width: 0, height: -4), blur: 6,
+                      color: CGColor(red: 0, green: 0, blue: 0, alpha: 0.70))
+
+        let textRect = CGRect(x: sidePad, y: textOriginY, width: maxTextWidth, height: textBlockHeight + fontSize * 0.3)
         let framePath = CGPath(rect: textRect, transform: nil)
         let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: 0), framePath, nil)
         CTFrameDraw(frame, ctx)
+        ctx.restoreGState()
     }
 
     /// Estimate how many lines the text will wrap into at the given font size and max width.
@@ -6815,7 +6880,6 @@ final class MCPServer {
         let attrs: [CFString: Any] = [kCTFontAttributeName: font]
         let attrStr = CFAttributedStringCreate(nil, text as CFString, attrs as CFDictionary)!
         let framesetter = CTFramesetterCreateWithAttributedString(attrStr)
-        // Use a tall box to allow natural wrapping
         let bigRect = CGRect(x: 0, y: 0, width: maxWidth, height: 10000)
         let path = CGPath(rect: bigRect, transform: nil)
         let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: 0), path, nil)
