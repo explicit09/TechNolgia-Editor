@@ -2994,13 +2994,31 @@ final class MCPServer {
             return "Error: No faces detected in video"
         }
 
-        // Step 2: Map speakers to faces
+        // Step 2: Map speakers to faces via lip-activity correlation
         var speakerToFace: [Int: Int] = [:]
         if let result = await appState.media.transcriptionService.getTranscript(
             for: asset, bundleURL: appState.projectBundleURL
         ), let speakers = result.speakers {
             let mapper = SpeakerFaceMapper()
-            speakerToFace = mapper.map(speakerSegments: speakers, faceTracks: faceTracks)
+            // Clip speakers to the analysis range so lip detection samples land in-range
+            let rangeStart = start ?? 0
+            let rangeEnd = end ?? asset.duration
+            let clippedForLip = speakers.compactMap { seg -> SpeakerSegment? in
+                let segStart = max(seg.range.start, rangeStart)
+                let segEnd = min(seg.range.end, rangeEnd)
+                guard segEnd > segStart else { return nil }
+                // Keep source-time range; mapper receives sourceOffset=0 since we pass source times
+                return SpeakerSegment(
+                    speakerID: seg.speakerID,
+                    range: TimeRange(start: segStart, end: segEnd)
+                )
+            }
+            speakerToFace = await mapper.mapByLipActivity(
+                speakerSegments: clippedForLip.isEmpty ? speakers : clippedForLip,
+                faceTracks: faceTracks,
+                videoURL: mediaURL,
+                sourceOffset: 0
+            )
         } else {
             // Default: face 0 = speaker 0, face 1 = speaker 1
             for i in 0..<faceTracks.count { speakerToFace[i] = i }
@@ -3414,6 +3432,12 @@ final class MCPServer {
         let prompt = """
         You are a social-media expert finding viral 15-60 second clips in a podcast/interview transcript.
 
+        You have access to a web_search tool. Before ranking moments, use it 1-3 times to check current trending topics relevant to the podcast (e.g., "what's trending in tech today", "top YouTube podcasts this week", recent news in AI/crypto/startups, viral social media discussions). Understanding what viewers are currently primed to engage with helps you boost moments that ride current waves.
+
+        Step 1 — Research: use web_search to check current trends relevant to the podcast's themes.
+        Step 2 — Rank: identify viral moments from the transcript, boosting any that reference currently trending people, products, events, or memes.
+        Step 3 — Output: return ONLY the JSON block described below.
+
         Criteria for "viral":
         - Contrarian claims ("Most people think X, but actually Y")
         - Surprising specific stats or numbers
@@ -3422,6 +3446,7 @@ final class MCPServer {
         - Vulnerable confessions or strong opinions
         - Back-and-forth debates between speakers
         - Self-contained moments — a first-time viewer should get it without prior context
+        - References to currently trending topics, people, or products (check with web_search first)
 
         Exclude:
         - Long monologues with no hook
@@ -3466,7 +3491,11 @@ final class MCPServer {
         do {
             let response = try await provider.complete(
                 messages: [AIMessage(role: "user", content: prompt)],
-                tools: []
+                tools: [],
+                modelOverride: nil,
+                additionalSystemPrompt: nil,
+                enableWebSearch: true,
+                maxWebSearchUses: 5
             )
 
             let rawContent = response.content.trimmingCharacters(in: .whitespacesAndNewlines)

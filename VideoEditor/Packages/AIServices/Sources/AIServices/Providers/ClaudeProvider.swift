@@ -39,6 +39,10 @@ public final class ClaudeProvider: AIProvider, @unchecked Sendable {
     }
 
     public func complete(messages: [AIMessage], tools: [AIToolDefinition], modelOverride: String?, additionalSystemPrompt: String? = nil) async throws -> AIResponse {
+        try await complete(messages: messages, tools: tools, modelOverride: modelOverride, additionalSystemPrompt: additionalSystemPrompt, enableWebSearch: false, maxWebSearchUses: 5)
+    }
+
+    public func complete(messages: [AIMessage], tools: [AIToolDefinition], modelOverride: String?, additionalSystemPrompt: String? = nil, enableWebSearch: Bool = false, maxWebSearchUses: Int = 5) async throws -> AIResponse {
         let effectiveModel = modelOverride ?? model
         let url = baseURL.appendingPathComponent("/v1/messages")
         var request = URLRequest(url: url)
@@ -46,6 +50,9 @@ public final class ClaudeProvider: AIProvider, @unchecked Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        if enableWebSearch {
+            request.setValue("web-search-2025-03-05", forHTTPHeaderField: "anthropic-beta")
+        }
 
         // Build messages using JSONSerialization for full control over structure
         var jsonMessages: [[String: Any]] = []
@@ -90,11 +97,24 @@ public final class ClaudeProvider: AIProvider, @unchecked Sendable {
                     "description": tool.description,
                     "input_schema": schema,
                 ]
-                // Cache the entire tools block via the last tool
-                if index == tools.count - 1 {
+                // Cache the entire tools block via the last tool (only when not adding web_search after)
+                if index == tools.count - 1 && !enableWebSearch {
                     toolDict["cache_control"] = ["type": "ephemeral"]
                 }
                 return toolDict
+            }
+        }
+        // Append server-side web_search tool when enabled (no cache_control — stateless per request)
+        if enableWebSearch {
+            let webSearchTool: [String: Any] = [
+                "type": "web_search_20250305",
+                "name": "web_search",
+                "max_uses": maxWebSearchUses,
+            ]
+            if jsonTools != nil {
+                jsonTools!.append(webSearchTool)
+            } else {
+                jsonTools = [webSearchTool]
             }
         }
 
@@ -113,7 +133,7 @@ public final class ClaudeProvider: AIProvider, @unchecked Sendable {
 
         var body: [String: Any] = [
             "model": effectiveModel,
-            "max_tokens": 4096,
+            "max_tokens": enableWebSearch ? 8192 : 4096,
             "messages": jsonMessages,
             "system": systemContent,
         ]
@@ -357,6 +377,9 @@ private struct ClaudeResponse: Decodable {
                 self = .text(try TextBlock(from: decoder))
             case "tool_use":
                 self = .toolUse(try ToolUseBlock(from: decoder))
+            case "server_tool_use", "web_search_tool_result":
+                // Anthropic server-side tool blocks (e.g. web_search) — ignore, not client-handled
+                self = .text(TextBlock(text: ""))
             default:
                 self = .text(TextBlock(text: ""))
             }
