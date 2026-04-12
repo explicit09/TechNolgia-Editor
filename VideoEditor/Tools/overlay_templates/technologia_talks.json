@@ -6,6 +6,8 @@
   "host_b_title": "Co-Host · Founder, Throwly",
   "host_b_photo": "elvis.jpg",
   "sponsors": ["LEARN-X", "Throwly", "Technologia Talks", "technologiaah.com"],
+  "showName": "TECHNOLOGIA TALKS",
+  "brandLogoPath": "/Users/tadies/Library/Containers/com.videoeditor.app/Data/Documents/technolgia_logo_horizontal.png",
   "brand": {
     "name": "Technolgia",
     "colors": {

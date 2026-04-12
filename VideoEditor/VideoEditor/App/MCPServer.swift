@@ -3267,7 +3267,9 @@ final class MCPServer {
             ),
             sponsors: sponsors,
             topics: topics,
-            chapters: chapters
+            chapters: chapters,
+            showName: resolve("showName") ?? existing.showName,
+            brandLogoPath: resolve("brandLogoPath") ?? existing.brandLogoPath
         )
 
         do {

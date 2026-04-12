@@ -97,8 +97,8 @@ struct ShortFormLayoutTests {
         #expect(bottomColor.r < 0.3, "Bottom region should not be red")
     }
 
-    @Test("Split layout has black caption area at bottom")
-    func splitCaptionArea() {
+    @Test("Split layout tiles fill full height — no black caption gap at bottom")
+    func splitNoBlackCaptionGap() {
         let source = makeTestSourceImage()
         let config = makeConfig(layout: .split)
         let renderSize = CGSize(width: 1080, height: 1920)
@@ -107,11 +107,11 @@ struct ShortFormLayoutTests {
             source: source, config: config, at: 0, renderSize: renderSize
         )
 
-        // Bottom 200px should be black (caption area)
-        let captionColor = sampleColor(from: result, at: CGPoint(x: 540, y: 50))
-        #expect(captionColor.r < 0.1, "Caption area should be black")
-        #expect(captionColor.g < 0.1, "Caption area should be black")
-        #expect(captionColor.b < 0.1, "Caption area should be black")
+        // Bottom tile should now reach y=0 (no reserved black caption area).
+        // Sample near the very bottom — should contain video content (not solid black).
+        let bottomColor = sampleColor(from: result, at: CGPoint(x: 540, y: 30))
+        let isAllBlack = bottomColor.r < 0.01 && bottomColor.g < 0.01 && bottomColor.b < 0.01
+        #expect(!isAllBlack, "Bottom of frame should contain video content, not a black caption gap")
     }
 
     // MARK: - Fill Layout Tests

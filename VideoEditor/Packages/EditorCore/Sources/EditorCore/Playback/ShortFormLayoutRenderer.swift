@@ -59,8 +59,7 @@ extension ShortFormLayoutRenderer {
         config: ShortFormConfig, time: TimeInterval, renderSize: CGSize
     ) -> CIImage {
         let divider = config.dividerWidth * (renderSize.height / 1920)
-        let captionH = config.captionRegionHeight * (renderSize.height / 1920)
-        let availableH = renderSize.height - captionH
+        let availableH = renderSize.height
         let regionH = (availableH - divider) / 2
         let halfW = sourceW / 2
 
@@ -103,7 +102,7 @@ extension ShortFormLayoutRenderer {
         let scaledA = croppedA
             .transformed(by: CGAffineTransform(translationX: -sourceRectA.minX, y: -sourceRectA.minY))
             .transformed(by: CGAffineTransform(scaleX: scaleAX, y: scaleAY))
-            .transformed(by: CGAffineTransform(translationX: 0, y: captionH + regionH + divider))
+            .transformed(by: CGAffineTransform(translationX: 0, y: regionH + divider))
 
         // Crop and scale person B
         let croppedB = source.cropped(to: sourceRectB)
@@ -112,13 +111,13 @@ extension ShortFormLayoutRenderer {
         let scaledB = croppedB
             .transformed(by: CGAffineTransform(translationX: -sourceRectB.minX, y: -sourceRectB.minY))
             .transformed(by: CGAffineTransform(scaleX: scaleBX, y: scaleBY))
-            .transformed(by: CGAffineTransform(translationX: 0, y: captionH))
+            .transformed(by: CGAffineTransform(translationX: 0, y: 0))
 
         // Black background
         let bg = CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: renderSize))
 
         // Divider line (dark gray)
-        let dividerY = captionH + regionH
+        let dividerY = regionH
         let dividerImage = CIImage(color: CIColor(red: 0.15, green: 0.15, blue: 0.15))
             .cropped(to: CGRect(x: 0, y: dividerY, width: renderSize.width, height: divider))
 

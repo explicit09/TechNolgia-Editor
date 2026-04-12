@@ -19,6 +19,13 @@ public struct BroadcastOverlayConfig: Codable, Sendable, Equatable {
     /// All other overlay elements (title card, chapters, ticker, host strip) are suppressed.
     /// Defaults to false so existing 16:9 exports are unaffected.
     public var shortFormMode: Bool
+    /// Persistent brand/show name shown in the short-form brand bar.
+    /// Stays constant across episodes (e.g. "TECHNOLOGIA TALKS").
+    /// When set, takes priority over episodeTitle in the brand bar.
+    public var showName: String
+    /// Optional path to a horizontal PNG logo shown in the brand bar.
+    /// When the file exists, logo renders on the left with showName to its right.
+    public var brandLogoPath: String?
 
     public init(
         isEnabled: Bool = false,
@@ -30,7 +37,9 @@ public struct BroadcastOverlayConfig: Codable, Sendable, Equatable {
         topics: [TimedEntry] = [],
         chapters: [TimedEntry] = [],
         style: OverlayStyle = .default,
-        shortFormMode: Bool = false
+        shortFormMode: Bool = false,
+        showName: String = "",
+        brandLogoPath: String? = nil
     ) {
         self.isEnabled = isEnabled
         self.episodeTitle = episodeTitle
@@ -42,12 +51,15 @@ public struct BroadcastOverlayConfig: Codable, Sendable, Equatable {
         self.chapters = chapters
         self.style = style
         self.shortFormMode = shortFormMode
+        self.showName = showName
+        self.brandLogoPath = brandLogoPath
     }
 
     // MARK: - Codable (manual, for decodeIfPresent on shortFormMode)
     enum CodingKeys: String, CodingKey {
         case isEnabled, episodeTitle, episodeSubtitle, hostA, hostB
         case sponsors, topics, chapters, style, shortFormMode
+        case showName, brandLogoPath
     }
 
     public init(from decoder: Decoder) throws {
@@ -62,6 +74,8 @@ public struct BroadcastOverlayConfig: Codable, Sendable, Equatable {
         chapters        = try c.decodeIfPresent([TimedEntry].self, forKey: .chapters) ?? []
         style           = try c.decodeIfPresent(OverlayStyle.self, forKey: .style) ?? .default
         shortFormMode   = try c.decodeIfPresent(Bool.self, forKey: .shortFormMode) ?? false
+        showName        = try c.decodeIfPresent(String.self, forKey: .showName) ?? ""
+        brandLogoPath   = try c.decodeIfPresent(String.self, forKey: .brandLogoPath)
     }
 
     public static let empty = BroadcastOverlayConfig()

@@ -69,7 +69,7 @@ extension BroadcastOverlayRenderer {
         let gold  = OverlayStyle.parseHex(st.goldHex)
         let navy  = OverlayStyle.parseHex(st.darkNavyHex)
 
-        // Bar dimensions — stays under caption zone (captions at fh*0.15 ≈ 288px from bottom)
+        // Bar dimensions
         let barH: CGFloat = 80.0 * s
         let accentH: CGFloat = 3.0 * s
 
@@ -84,23 +84,53 @@ extension BroadcastOverlayRenderer {
         ctx.setFillColor(CGColor(red: gold.r, green: gold.g, blue: gold.b, alpha: 1.0))
         ctx.fill(CGRect(x: 0, y: barH - accentH, width: size.width, height: accentH))
 
-        // Show name: prefer episodeTitle as show name, fall back to "TECHNOLOGIA TALKS"
-        let showName: String
-        if !config.episodeTitle.isEmpty {
-            showName = config.episodeTitle.uppercased()
+        // Determine display name: showName → episodeTitle → hard fallback
+        let displayName: String
+        if !config.showName.isEmpty {
+            displayName = config.showName.uppercased()
+        } else if !config.episodeTitle.isEmpty {
+            displayName = config.episodeTitle.uppercased()
         } else {
-            showName = "TECHNOLOGIA TALKS"
+            displayName = "TECHNOLOGIA TALKS"
         }
 
-        let fontSize: CGFloat = 28.0 * s
+        let fontSize: CGFloat = 32.0 * s
         let font = condensedFont(size: fontSize)
-        let textW = measureText(showName, font: font)
-        let textX = (size.width - textW) / 2
-        // Center vertically in the bar below the accent line
+        let goldColor = CGColor(red: gold.r, green: gold.g, blue: gold.b, alpha: 1.0)
+        // Vertical center baseline for text (below accent line)
         let textY = (barH - accentH) / 2 - fontSize * 0.3
 
-        let goldColor = CGColor(red: gold.r, green: gold.g, blue: gold.b, alpha: 1.0)
-        drawText(ctx: ctx, text: showName, x: textX, y: textY, font: font, color: goldColor)
+        // Try to load logo from brandLogoPath
+        let logoImage: CGImage? = loadLogoImage(path: config.brandLogoPath)
+
+        if let logo = logoImage {
+            // Logo layout: logo on left, text to the right
+            let leftPad: CGFloat = 32.0 * s
+            let logoGap: CGFloat = 16.0 * s
+            let logoMaxH: CGFloat = 60.0 * s
+            let logoAspect = CGFloat(logo.width) / CGFloat(logo.height)
+            let logoH = min(logoMaxH, barH - accentH - 8.0 * s)
+            let logoW = logoH * logoAspect
+            let logoY = (barH - accentH - logoH) / 2  // vertically centered in bar below accent
+
+            ctx.draw(logo, in: CGRect(x: leftPad, y: logoY, width: logoW, height: logoH))
+
+            let textX = leftPad + logoW + logoGap
+            drawText(ctx: ctx, text: displayName, x: textX, y: textY, font: font, color: goldColor)
+        } else {
+            // No logo: center text in bar
+            let textW = measureText(displayName, font: font)
+            let textX = (size.width - textW) / 2
+            drawText(ctx: ctx, text: displayName, x: textX, y: textY, font: font, color: goldColor)
+        }
+    }
+
+    /// Load a CGImage from an optional file path. Returns nil if path is nil or file missing.
+    private static func loadLogoImage(path: String?) -> CGImage? {
+        guard let path = path, !path.isEmpty else { return nil }
+        let url = URL(fileURLWithPath: path)
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        return CGImageSourceCreateImageAtIndex(source, 0, nil)
     }
 }
 
