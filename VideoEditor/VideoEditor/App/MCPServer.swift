@@ -406,6 +406,16 @@ final class MCPServer {
                     ], "required": ["asset_id"]],
                 ],
                 [
+                    "name": "find_viral_moments",
+                    "description": "Find the best 15-60 second viral clip moments in a transcribed podcast or interview. Sends the full diarized transcript to Claude which identifies contrarian claims, surprising stats, emotional peaks, quotable one-liners, and self-contained moments that work without prior context. Returns a ranked list with exact word-level timestamps. Requires a transcript with speaker diarization — run transcribe_asset with Deepgram first.",
+                    "inputSchema": ["type": "object", "properties": [
+                        "asset_id": ["type": "string", "description": "UUID of the asset to analyze"],
+                        "max_moments": ["type": "number", "description": "Maximum number of viral moments to return (default: 10)"],
+                        "min_duration_seconds": ["type": "number", "description": "Minimum clip duration in seconds (default: 15)"],
+                        "max_duration_seconds": ["type": "number", "description": "Maximum clip duration in seconds (default: 60)"],
+                    ], "required": ["asset_id"]],
+                ],
+                [
                     "name": "detect_episodes",
                     "description": "Detect episode boundaries in long recordings. Combines intro phrase detection, energy analysis, transcript continuity, and meta-talk detection (production discussion vs content). Returns episode start/end times with confidence scores and evidence. Run on recordings that contain multiple episodes or mixed content.",
                     "inputSchema": ["type": "object", "properties": [
@@ -781,6 +791,9 @@ final class MCPServer {
         }
         if name == "analyze_transcript" {
             return await handleAnalyzeTranscript(arguments, appState: appState)
+        }
+        if name == "find_viral_moments" {
+            return await handleFindViralMoments(arguments, appState: appState)
         }
         if name == "detect_episodes" {
             return await handleDetectEpisodes(arguments, appState: appState)
@@ -2000,6 +2013,8 @@ final class MCPServer {
     /// In-progress background transcription tasks, keyed by asset ID.
     private var backgroundTranscriptions: [UUID: Task<Void, Never>] = [:]
     private var backgroundTranscriptionResults: [UUID: String] = [:]
+    /// Latest status + when that phase began + when the whole job started.
+    private var backgroundTranscriptionStatus: [UUID: (phase: String, phaseStart: Date, jobStart: Date)] = [:]
 
     private func handleTranscribeAsset(_ args: [String: Any], appState: AppState) async -> String {
         guard let assetIDStr = args["asset_id"] as? String, let assetID = UUID(uuidString: assetIDStr) else {
@@ -2030,20 +2045,35 @@ final class MCPServer {
             if let result = backgroundTranscriptionResults[assetID] {
                 backgroundTranscriptions.removeValue(forKey: assetID)
                 backgroundTranscriptionResults.removeValue(forKey: assetID)
+                backgroundTranscriptionStatus.removeValue(forKey: assetID)
                 return result
+            }
+            if let status = backgroundTranscriptionStatus[assetID] {
+                let phaseElapsed = Int(Date().timeIntervalSince(status.phaseStart))
+                let totalElapsed = Int(Date().timeIntervalSince(status.jobStart))
+                return "Transcription in progress for '\(asset.name)': \(status.phase) (phase \(phaseElapsed)s, total \(totalElapsed)s). Poll again."
             }
             return "Transcription in progress for '\(asset.name)'. Poll again or use get_transcript to check."
         }
 
         // For long assets or explicit async, run in background and return immediately
         if runAsync {
+            let jobStart = Date()
+            backgroundTranscriptionStatus[assetID] = (phase: "Starting…", phaseStart: jobStart, jobStart: jobStart)
+            let onStatusUpdate: @Sendable (String) -> Void = { [weak self] phase in
+                Task { @MainActor in
+                    self?.backgroundTranscriptionStatus[assetID] =
+                        (phase: phase, phaseStart: Date(), jobStart: jobStart)
+                }
+            }
             let task = Task { [weak self] in
                 do {
                     let result = try await appState.media.transcriptionService.transcribe(
                         asset: asset,
                         mediaManager: appState.media.mediaManager,
                         bundleURL: appState.projectBundleURL,
-                        useLocal: useLocal
+                        useLocal: useLocal,
+                        onStatus: onStatusUpdate
                     )
                     if let result {
                         await appState.media.refreshAssets()
@@ -3286,6 +3316,194 @@ final class MCPServer {
 
         let header = "Transcript: \(asset.name) (\(words.count) words, \(String(format: "%.0f", endFilter - startFilter))s)\n\n"
         return header + output
+    }
+
+    // MARK: - Find Viral Moments
+
+    private func handleFindViralMoments(_ args: [String: Any], appState: AppState) async -> String {
+        guard let assetIDStr = args["asset_id"] as? String,
+              let assetID = UUID(uuidString: assetIDStr),
+              let asset = appState.assets.first(where: { $0.id == assetID }) else {
+            return "Error: Invalid asset_id"
+        }
+
+        let maxMoments = args["max_moments"] as? Int ?? (args["max_moments"] as? Double).map({ Int($0) }) ?? 10
+        let minDuration = args["min_duration_seconds"] as? Double ?? 15.0
+        let maxDuration = args["max_duration_seconds"] as? Double ?? 60.0
+
+        // Load transcript
+        guard let result = await appState.media.transcriptionService.getTranscript(
+            for: asset, bundleURL: appState.projectBundleURL
+        ) else {
+            return "Error: No transcript found. Run transcribe_asset first."
+        }
+
+        // Require diarization — speakers must be present
+        guard let speakers = result.speakers, !speakers.isEmpty else {
+            return "Error: No speaker diarization found. Re-transcribe with transcribe_asset using the Deepgram provider (default), which supports speaker diarization."
+        }
+
+        let words = result.words
+        guard !words.isEmpty else {
+            return "Error: Transcript is empty."
+        }
+
+        let coverage = TranscriptAnalysisSupport.assessCoverage(
+            words: words,
+            assetDuration: asset.duration
+        )
+
+        if coverage.isSparseForStructuralAnalysis {
+            let startText = TranscriptAnalysisSupport.formatTimestamp(coverage.firstStart ?? 0)
+            let endText = TranscriptAnalysisSupport.formatTimestamp(coverage.lastEnd ?? 0)
+            return """
+            === VIRAL MOMENTS ===
+            Asset: \(asset.name)
+
+            Result: no viral moments found.
+            Reason: transcript coverage is too sparse (\(coverage.wordCount) words from [\(startText)]-[\(endText)]) — not enough material to identify \(Int(minDuration))-\(Int(maxDuration))s viral clips.
+            """
+        }
+
+        // Get Claude API key
+        guard let apiKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] ?? loadAnthropicKey() else {
+            return "Error: ANTHROPIC_API_KEY not configured. Cannot find viral moments without Claude."
+        }
+
+        // Build the word-level JSON with speaker info (compact format to save tokens)
+        // Each element: {"w": "word", "s": 12.3, "e": 12.7, "sp": "0"}
+        let wordEntries: [[String: Any]] = words.map { w in
+            let speakerID = speakers.first(where: { $0.range.contains(w.start) })?.speakerID ?? "0"
+            return ["w": w.word, "s": w.start, "e": w.end, "sp": speakerID]
+        }
+
+        guard let wordData = try? JSONSerialization.data(withJSONObject: wordEntries, options: []),
+              let wordJSON = String(data: wordData, encoding: .utf8) else {
+            return "Error: Failed to serialize transcript words."
+        }
+
+        // Use claude-opus-4-5 for long-context single-pass; fall back to sonnet on error
+        let provider = ClaudeProvider(apiKey: apiKey, model: "claude-opus-4-5")
+
+        let prompt = """
+        You are a social-media expert finding viral 15-60 second clips in a podcast/interview transcript.
+
+        Criteria for "viral":
+        - Contrarian claims ("Most people think X, but actually Y")
+        - Surprising specific stats or numbers
+        - Quotable one-liners that punch on their own
+        - Emotional peaks (laughter, disbelief, frustration, excitement)
+        - Vulnerable confessions or strong opinions
+        - Back-and-forth debates between speakers
+        - Self-contained moments — a first-time viewer should get it without prior context
+
+        Exclude:
+        - Long monologues with no hook
+        - Context-heavy setups that need the whole podcast
+        - Greetings, transitions, sponsor reads
+
+        The transcript is provided as a JSON array. Each element has:
+        - "w": the word
+        - "s": word start time (seconds, exact)
+        - "e": word end time (seconds, exact)
+        - "sp": speaker ID string
+
+        For each moment return JSON (and ONLY JSON — no prose outside the JSON block):
+        {
+          "moments": [
+            {
+              "hook": "exact quote of the punchline or opening sentence",
+              "approx_start_word": "first few words of the clip opening sentence",
+              "approx_end_word": "last few words of the clip closing sentence",
+              "clip_start_time": 1234.5,
+              "clip_end_time": 1278.2,
+              "duration_seconds": 43.7,
+              "reasoning": "one sentence on why this is viral",
+              "cold_open_recommended": true,
+              "speakers_involved": ["0", "1"]
+            }
+          ]
+        }
+
+        Rules:
+        - Use the exact "s" and "e" values from the word data for clip_start_time and clip_end_time — do NOT estimate.
+        - clip_start_time must be the "s" value of the first word in the clip.
+        - clip_end_time must be the "e" value of the last word in the clip.
+        - Each clip must be between \(Int(minDuration)) and \(Int(maxDuration)) seconds (duration_seconds = clip_end_time - clip_start_time).
+        - Return exactly \(maxMoments) moments, ranked strongest first.
+        - Each clip must be a complete thought — don't cut mid-sentence.
+
+        Input transcript:
+        \(wordJSON)
+        """
+
+        do {
+            let response = try await provider.complete(
+                messages: [AIMessage(role: "user", content: prompt)],
+                tools: []
+            )
+
+            let rawContent = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            // Parse the JSON response
+            // Claude may wrap in ```json ... ``` — strip that to extract the outermost JSON object
+            let jsonString: String
+            if let rangeStart = rawContent.range(of: "{"),
+               let rangeEnd = rawContent.range(of: "}", options: .backwards) {
+                jsonString = String(rawContent[rangeStart.lowerBound...rangeEnd.upperBound])
+            } else {
+                jsonString = rawContent
+            }
+
+            guard let jsonData = jsonString.data(using: .utf8),
+                  let parsed = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                  let moments = parsed["moments"] as? [[String: Any]] else {
+                // Return raw Claude response if JSON parsing fails
+                return "=== VIRAL MOMENTS ===\nAsset: \(asset.name)\n\nCould not parse structured JSON. Raw Claude response:\n\n\(rawContent)"
+            }
+
+            // Build human-readable summary
+            var output = "=== VIRAL MOMENTS ===\n"
+            output += "Asset: \(asset.name)\n"
+            output += "Requested: top \(maxMoments) moments (\(Int(minDuration))-\(Int(maxDuration))s)\n"
+            output += "Found: \(moments.count) moments\n\n"
+
+            for (index, moment) in moments.enumerated() {
+                let hook = moment["hook"] as? String ?? ""
+                let startTime = moment["clip_start_time"] as? Double ?? 0
+                let endTime = moment["clip_end_time"] as? Double ?? 0
+                let duration = moment["duration_seconds"] as? Double ?? (endTime - startTime)
+                let reasoning = moment["reasoning"] as? String ?? ""
+                let coldOpen = moment["cold_open_recommended"] as? Bool ?? false
+                let speakersInvolved = (moment["speakers_involved"] as? [String] ?? []).joined(separator: ", ")
+                let approxStart = moment["approx_start_word"] as? String ?? ""
+                let approxEnd = moment["approx_end_word"] as? String ?? ""
+
+                let startFormatted = TranscriptAnalysisSupport.formatTimestamp(startTime)
+                let endFormatted = TranscriptAnalysisSupport.formatTimestamp(endTime)
+
+                output += "MOMENT \(index + 1):\n"
+                output += "  Start: [\(startFormatted)] (\(String(format: "%.2f", startTime))s)\n"
+                output += "  End:   [\(endFormatted)] (\(String(format: "%.2f", endTime))s)\n"
+                output += "  Duration: \(String(format: "%.1f", duration))s\n"
+                output += "  Hook: \"\(hook)\"\n"
+                output += "  Opens with: \"\(approxStart)\"\n"
+                output += "  Closes with: \"\(approxEnd)\"\n"
+                output += "  Speakers: \(speakersInvolved.isEmpty ? "unknown" : speakersInvolved)\n"
+                output += "  Why viral: \(reasoning)\n"
+                if coldOpen {
+                    output += "  Cold open: recommended\n"
+                }
+                output += "\n"
+            }
+
+            // Also append the raw JSON at the end for programmatic consumers
+            output += "---\nRAW JSON:\n\(jsonString)\n"
+
+            return output
+        } catch {
+            return "Error calling Claude: \(error.localizedDescription)"
+        }
     }
 
     // MARK: - Analyze Transcript

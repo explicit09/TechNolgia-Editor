@@ -60,6 +60,7 @@ public struct AIToolRegistry: Sendable {
         getState,
         autoCut,
         analyzeTranscript,
+        findViralMoments,
         getFullTranscript,
         analyzeAudioEnergy,
         classifyAudio,
@@ -203,6 +204,17 @@ public struct AIToolRegistry: Sendable {
         description: "Send the FULL transcript to Claude for content comprehension. Identifies real episodes, pre-show chat, rehearsals, planning sections. Run this FIRST before any editing. Transcript-first, tools-second.",
         parameters: .object([
             "asset_id": .init(type: "string", description: "UUID of the asset"),
+        ], required: ["asset_id"])
+    )
+
+    public static let findViralMoments = AIToolDefinition(
+        name: "find_viral_moments",
+        description: "Find the best 15-60 second viral clip moments in a transcribed podcast or interview. Sends the full diarized transcript to Claude which identifies contrarian claims, surprising stats, emotional peaks, quotable one-liners, and self-contained moments. Returns a ranked list with exact word-level timestamps. Requires a transcript with speaker diarization.",
+        parameters: .object([
+            "asset_id": .init(type: "string", description: "UUID of the asset to analyze"),
+            "max_moments": .init(type: "number", description: "Maximum number of viral moments to return (default: 10)"),
+            "min_duration_seconds": .init(type: "number", description: "Minimum clip duration in seconds (default: 15)"),
+            "max_duration_seconds": .init(type: "number", description: "Maximum clip duration in seconds (default: 60)"),
         ], required: ["asset_id"])
     )
 
