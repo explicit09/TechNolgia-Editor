@@ -6721,7 +6721,7 @@ final class MCPServer {
                 logoPath = brandLogoPath
             }
             if logoPath == nil {
-                logoPath = "/Users/tadies/Library/Containers/com.videoeditor.app/Data/Documents/technolgia_logo_nobg.png"
+                logoPath = "/Users/tadies/Library/Containers/com.videoeditor.app/Data/Documents/technolgia_logo_clean.png"
             }
             if let lp = logoPath,
                FileManager.default.fileExists(atPath: lp),
@@ -6738,11 +6738,10 @@ final class MCPServer {
                 let x = canvasW - drawW - margin
                 // CGContext y=0 is at bottom; top-right means y = canvasH - drawH - margin
                 let y = canvasH - drawH - margin
-                ctx.saveGState()
-                ctx.setShadow(offset: CGSize(width: 3, height: -3), blur: 6,
-                              color: CGColor(red: 0, green: 0, blue: 0, alpha: 0.50))
+                // No shadow — CGContext.setShadow renders as a dark rectangle for
+                // transparent PNGs instead of following the alpha shape. The logo
+                // has enough contrast on its own against the video background.
                 ctx.draw(logoImage, in: CGRect(x: x, y: y, width: drawW, height: drawH))
-                ctx.restoreGState()
             }
             // If logo file is missing, skip gracefully — no error
         }

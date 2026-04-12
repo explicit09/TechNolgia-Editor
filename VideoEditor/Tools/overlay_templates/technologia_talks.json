@@ -1,13 +1,18 @@
 {
   "host_a_name": "Tadiwa Mbuwayesango",
-  "host_a_title": "Co-Host · Founder, LEARN-X",
+  "host_a_title": "Co-Host \u00b7 Founder, LEARN-X",
   "host_a_photo": "tadiwa.jpg",
   "host_b_name": "Elvis Kimara",
-  "host_b_title": "Co-Host · Founder, Throwly",
+  "host_b_title": "Co-Host \u00b7 Founder, Throwly",
   "host_b_photo": "elvis.jpg",
-  "sponsors": ["LEARN-X", "Throwly", "Technologia Talks", "technologiaah.com"],
+  "sponsors": [
+    "LEARN-X",
+    "Throwly",
+    "Technologia Talks",
+    "technologiaah.com"
+  ],
   "showName": "TECHNOLOGIA TALKS",
-  "brandLogoPath": "/Users/tadies/Library/Containers/com.videoeditor.app/Data/Documents/technolgia_logo_horizontal.png",
+  "brandLogoPath": "/Users/tadies/Library/Containers/com.videoeditor.app/Data/Documents/technolgia_logo_clean.png",
   "brand": {
     "name": "Technolgia",
     "colors": {
