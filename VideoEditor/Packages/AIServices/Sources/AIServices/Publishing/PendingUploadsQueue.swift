@@ -57,7 +57,16 @@ public struct PendingUploadsQueue: Sendable {
     }
 
     public func append(_ upload: PendingUpload) throws {
-        var current = (try? load()) ?? []
+        var current: [PendingUpload]
+        do {
+            current = try load()
+        } catch {
+            // load() only throws when the file exists but cannot be decoded.
+            // Preserve the corrupt file for diagnosis instead of overwriting.
+            let backup = "\(storagePath).corrupt-\(Int(Date().timeIntervalSince1970))"
+            try? FileManager.default.moveItem(atPath: storagePath, toPath: backup)
+            current = []
+        }
         current.append(upload)
         let data = try JSONEncoder().encode(current)
         try data.write(to: URL(fileURLWithPath: storagePath), options: .atomic)
