@@ -3507,15 +3507,21 @@ final class MCPServer {
             "template": "technologia_talks",
             "output_path": thumbTempPath,
         ]
-        _ = await handleGenerateShortThumbnail(thumbArgs, appState: appState)
+        let thumbResult = await handleGenerateShortThumbnail(thumbArgs, appState: appState)
+        if thumbResult.hasPrefix("Error:") {
+            return "Error: Thumbnail generation failed — \(thumbResult.dropFirst("Error:".count).trimmingCharacters(in: .whitespaces))"
+        }
         guard let thumbnailPNGData = FileManager.default.contents(atPath: thumbTempPath) else {
-            return "Error: Thumbnail generation failed — no default PNG"
+            return "Error: Thumbnail generation failed — no default PNG at \(thumbTempPath)"
         }
 
         // Build the shortFormConfig by running analyze_for_shorts for this range
-        _ = await handleAnalyzeForShorts([
+        let analyzeResult = await handleAnalyzeForShorts([
             "asset_id": assetIDStr, "start": sourceStart, "end": sourceEnd,
         ], appState: appState)
+        if analyzeResult.hasPrefix("Error:") {
+            return "Error: ShortFormConfig build failed — \(analyzeResult.dropFirst("Error:".count).trimmingCharacters(in: .whitespaces))"
+        }
         guard let shortFormConfig = shortFormConfigs[assetID] else {
             return "Error: Could not build ShortFormConfig for candidate frames"
         }
