@@ -1,20 +1,38 @@
 import Foundation
 import SwiftUI
 
+/// Compile-time configuration. Credentials are baked in; this is a two-user private app.
+/// If you open-source this repo, move these to a local, gitignored config.
 enum Config {
     static let appName = "TechNolgia"
+
+    // Replace these with your actual values from Supabase → Settings → API.
+    static let supabaseURL = URL(string: "https://REPLACE_WITH_PROJECT_REF.supabase.co")!
+    static let supabaseAnonKey = "REPLACE_WITH_ANON_KEY"
+
+    /// Brand color palette for thumbnail pill. Order matters — UI shows these left-to-right.
     static let brandPalette: [BrandColor] = [
-        .init(name: "Gold", color: Color(red: 201 / 255, green: 160 / 255, blue: 40 / 255)),
-        .init(name: "Navy", color: Color(red: 7 / 255, green: 13 / 255, blue: 23 / 255)),
-        .init(name: "White", color: .white),
-        .init(name: "Pink", color: Color(red: 233 / 255, green: 30 / 255, blue: 99 / 255)),
-        .init(name: "Green", color: Color(red: 0 / 255, green: 200 / 255, blue: 83 / 255)),
+        BrandColor(name: "Gold", hex: "#C9A028"),
+        BrandColor(name: "Navy", hex: "#070D17"),
+        BrandColor(name: "White", hex: "#FFFFFF"),
+        BrandColor(name: "Pink", hex: "#E91E63"),
+        BrandColor(name: "Green", hex: "#00C853"),
     ]
-}
 
-struct BrandColor: Identifiable, Hashable {
-    let name: String
-    let color: Color
+    struct BrandColor: Identifiable, Hashable {
+        let name: String
+        let hex: String
+        var id: String { hex }
 
-    var id: String { name }
+        /// Backwards-compat convenience for existing views that consumed `brand.color` directly.
+        var color: Color {
+            let raw = hex.replacingOccurrences(of: "#", with: "")
+            guard raw.count == 6, let value = Int(raw, radix: 16) else { return .white }
+            return Color(
+                red: Double((value >> 16) & 0xFF) / 255.0,
+                green: Double((value >> 8) & 0xFF) / 255.0,
+                blue: Double(value & 0xFF) / 255.0
+            )
+        }
+    }
 }
