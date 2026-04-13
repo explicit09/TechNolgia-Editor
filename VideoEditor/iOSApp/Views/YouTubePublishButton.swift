@@ -25,7 +25,14 @@ struct YouTubePublishButton: View {
         case idle
         case publishing(progress: Double)
         case success(url: URL)
-        case failure(message: String)
+        case failure(message: String, kind: FailureKind = .generic)
+
+        /// Distinct failure kinds so the UI can swap the icon (e.g. clock for
+        /// daily quota vs generic warning triangle for everything else).
+        enum FailureKind: Equatable {
+            case generic
+            case quota
+        }
     }
 
     var body: some View {
@@ -46,7 +53,7 @@ struct YouTubePublishButton: View {
                 }
             }
 
-            if case .failure(let message) = state {
+            if case .failure(let message, _) = state {
                 VStack(spacing: 6) {
                     Text(message)
                         .font(.caption)
@@ -108,8 +115,11 @@ struct YouTubePublishButton: View {
                 .tint(.white)
         case .success:
             Image(systemName: "checkmark.circle.fill")
-        case .failure:
-            Image(systemName: "exclamationmark.triangle.fill")
+        case .failure(_, let kind):
+            // Quota failures aren't really errors — the upload worked but the
+            // daily 10,000-unit budget is spent (~6 uploads). Show a clock
+            // icon so the user understands this resolves itself tomorrow.
+            Image(systemName: kind == .quota ? "clock.badge.exclamationmark.fill" : "exclamationmark.triangle.fill")
         }
     }
 
@@ -167,7 +177,7 @@ struct YouTubePublishButton: View {
             // After auth, immediately kick off the publish so the user gets the one-tap experience.
             await publish()
         } catch {
-            state = .failure(message: error.localizedDescription)
+            state = .failure(message: error.localizedDescription, kind: failureKind(for: error))
         }
     }
 
@@ -200,8 +210,15 @@ struct YouTubePublishButton: View {
             state = .success(url: postURL)
             try? await appState.supabase.recordShare(shortID: short.id, platform: .youtube_shorts)
         } catch {
-            state = .failure(message: error.localizedDescription)
+            state = .failure(message: error.localizedDescription, kind: failureKind(for: error))
         }
+    }
+
+    /// Map known typed errors onto a FailureKind so the UI can differentiate
+    /// (e.g. quota exhaustion gets a clock, everything else gets a warning).
+    private func failureKind(for error: Error) -> PublishState.FailureKind {
+        if case YouTubeClient.ClientError.quotaExceeded = error { return .quota }
+        return .generic
     }
 
     // MARK: - Caption / metadata loading
