@@ -124,7 +124,7 @@ struct LibraryView: View {
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
                     ForEach(appState.liveShorts) { short in
                         NavigationLink {
-                            LiveShortDetailView(short: short)
+                            DetailView(short: short)
                         } label: {
                             LiveShortCard(short: short)
                         }
@@ -195,66 +195,6 @@ private struct LiveShortCard: View {
         let m = s / 60
         let r = s % 60
         return m > 0 ? "\(m):\(String(format: "%02d", r))" : "\(r)s"
-    }
-}
-
-private struct LiveShortDetailView: View {
-    let short: Short
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                AsyncImage(url: appState.supabase.publicObjectURL(
-                    bucket: "shorts-thumbnails",
-                    path: short.id.uuidString.lowercased() + ".png"
-                )) { phase in
-                    if let image = phase.image {
-                        image.resizable().aspectRatio(9.0/16.0, contentMode: .fit)
-                    } else {
-                        Color.white.opacity(0.1).aspectRatio(9.0/16.0, contentMode: .fit)
-                    }
-                }
-                .frame(maxWidth: 300)
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .frame(maxWidth: .infinity, alignment: .center)
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(short.label)
-                        .font(.title2.weight(.bold))
-                        .foregroundStyle(.white)
-                    Text(short.hook)
-                        .font(.body)
-                        .foregroundStyle(.white.opacity(0.85))
-                    HStack(spacing: 8) {
-                        Label("Evergreen \(short.evergreenScore)/10", systemImage: "leaf.fill")
-                        Label("Trending \(short.trendingScore)/10", systemImage: "flame.fill")
-                    }
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.7))
-                    Text("Source: \(short.sourceAsset) · \(String(format: "%.0f", short.sourceStart))–\(String(format: "%.0f", short.sourceEnd))s")
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.6))
-                    Text(short.reasoning)
-                        .font(.footnote)
-                        .foregroundStyle(.white.opacity(0.75))
-                        .padding(.top, 8)
-                }
-            }
-            .padding(20)
-        }
-        .background(
-            LinearGradient(
-                colors: [
-                    Color(red: 8 / 255, green: 12 / 255, blue: 19 / 255),
-                    Color(red: 17 / 255, green: 28 / 255, blue: 47 / 255),
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            ).ignoresSafeArea()
-        )
-        .navigationTitle(short.label)
-        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
