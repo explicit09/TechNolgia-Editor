@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 ## What This Is
 
@@ -72,7 +72,7 @@ The sandboxed macOS app also reads `.env` from
 
 ## Skills
 
-Skills are in `.claude/skills/` (read by Claude Code) and mirrored at `.agents/skills/` (read by Codex and other agents using the AGENTS.md convention). Both trees are kept identical — edit both when changing a skill.
+Skills are in `.agents/skills/` (read by Codex / agents using the AGENTS.md convention) and mirrored at `.claude/skills/` (read by Claude Code). Both trees are kept identical — edit both when changing a skill.
 
 The primary workflow is `podcast-episode-producer` — read its SKILL.md before producing episodes.
 

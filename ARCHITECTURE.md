@@ -1,5 +1,12 @@
 # Native macOS AI-Ready Video Editor — Architecture Plan
 
+This doc describes the macOS editor — the original surface and still the bulk of the system. Since the original plan, two companion surfaces have been added:
+
+- **iOS distribution app** (`VideoEditor/iOSApp/`) — consumes shorts produced by the Mac.
+- **Supabase backend** (`supabase/`) — the pipe between the two apps.
+
+See the [Distribution Pipeline](#distribution-pipeline) section below for how they fit together.
+
 ## Philosophy
 
 This is a real-time media system with AI attached to it.
@@ -18,6 +25,8 @@ Editor core first. AI-ready foundation underneath. AI features layered progressi
 | Ingestion AI | Core ML + local models | Transcript, silence, shot boundaries, diarization |
 | Assistive AI | Core ML + cloud APIs | Search, suggestions, chaptering, rough cuts |
 | Generative AI | Cloud APIs | Titles, reframing, visual variations, heavy tasks |
+| Publishing | Supabase (Postgres + Storage) | Upload shorts + captions + thumbnails; TUS resumable for large videos |
+| Companion app | SwiftUI + AVKit (iOS 17+) | Browse published shorts, edit captions/thumbnails, share |
 
 ---
 
@@ -59,14 +68,45 @@ VideoEditor/
 │       └── Sources/AIServices/
 │           ├── Protocols/              # AIProvider, AITool, AnalysisTask
 │           ├── Context/                # Editor state → AI-consumable context
-│           ├── Ingestion/              # Transcript, silence, shots, diarization
-│           ├── Assistive/              # Search, suggestions, chaptering, rough cuts
-│           ├── Generative/             # Titles, reframing, visual variations
-│           └── Providers/              # Provider implementations (future)
+│           ├── Providers/              # ClaudeProvider, PexelsClient
+│           ├── Transcription/          # Deepgram + WhisperKit transcription
+│           ├── Analysis/               # Transcript analysis, silence, shots
+│           ├── Search/                 # Semantic + keyword search over analyses
+│           ├── Planning/               # PlanGenerator (turns prompts into intents)
+│           ├── Routing/                # Model/cost routing between providers
+│           ├── Skills/                 # Skill-activation + workflow wiring
+│           ├── Tools/                  # AIToolRegistry — MCP-facing tool defs
+│           ├── ImageGen/               # Thumbnail + carousel image generation
+│           └── Publishing/             # SupabaseUploader, CaptionDrafter,
+│                                       # PendingUploadsQueue, SupabaseClient (TUS)
+│
+├── iOSApp/                             # ShortsDistribution iOS target (SwiftUI)
+│   ├── App/                            # App entry + navigation
+│   ├── Views/                          # Library, Detail, Caption editor, Thumbnail editor
+│   ├── Models/                         # Short, Caption, ThumbnailSettings, Platform
+│   ├── Networking/                     # SupabaseShortsClient (anon key)
+│   ├── Cache/                          # VideoCache, FrameCache
+│   ├── Rendering/                      # ThumbnailCompositor (Core Graphics preview)
+│   ├── AppIntents/                     # Share-sheet intents
+│   ├── Config/                         # Config.swift (anon key + brand palette)
+│   ├── Resources/
+│   └── project.yml                     # Separate XcodeGen spec from the macOS app
+│
+├── Tools/                              # Python eval harness + MCP visual tests
 │
 └── Tests/
     ├── EditorCoreTests/
     └── AIServicesTests/
+```
+
+The backend lives alongside `VideoEditor/` at the repo root:
+
+```
+supabase/
+├── migrations/         # Schema: shorts, captions, thumbnail_settings, share_intents
+├── functions/
+│   └── regenerate-caption/   # Edge function: Claude-powered caption rewrites
+└── seeds/              # Storage bucket creation (videos, thumbnails, frames)
 ```
 
 ---
@@ -656,6 +696,44 @@ Once Phase 1 is solid, AI features plug in:
 - **Semantic search**: "Find where I mention pricing" → transcript + embedding search
 
 None of this requires redesigning the editor. It all operates on the structured data model.
+
+---
+
+## Distribution Pipeline
+
+The editor's short-form output flows to Supabase, and an iOS app consumes it. The Mac is the sole writer; the iOS app is read-plus-edit-captions-only.
+
+```
+┌──────────────────┐      service-role key       ┌──────────────────┐      anon key      ┌────────────────┐
+│ macOS editor     │  ────────────────────────▶  │ Supabase         │  ◀──────────────── │ iOS app        │
+│                  │    upload_short_to_library  │                  │    read + edit     │ ShortsDistrib. │
+│ SupabaseUploader │                             │ shorts_app schema│                    │                │
+│ CaptionDrafter   │  TUS resumable for >50MB    │ • shorts         │                    │ LibraryView    │
+│ ThumbnailCandi-  │                             │ • captions       │                    │ DetailView     │
+│ dates            │                             │ • thumbnail_     │                    │ CaptionEditor  │
+│ PendingUploads-  │                             │   settings       │                    │ ThumbnailEditor│
+│ Queue (retry)    │                             │ • share_intents  │                    │                │
+└──────────────────┘                             │ shorts-videos/   │                    └────────────────┘
+                                                 │ shorts-thumbnails│
+                                                 │ shorts-frames    │
+                                                 │   (public-read)  │
+                                                 │ • regenerate-    │                              │
+                                                 │   caption fn     │  ◀───── POST ────────────────┘
+                                                 │   (→ Claude)     │
+                                                 └──────────────────┘
+```
+
+**Key constraints:**
+
+- **Key separation.** Mac uses `SUPABASE_SERVICE_KEY`. iOS ships with the **anon key only** (`VideoEditor/iOSApp/Config/Config.swift`). The service key must never reach the client.
+- **Public-read buckets.** `shorts-videos`, `shorts-thumbnails`, `shorts-frames` are public-read so iOS can stream without signed-URL infrastructure. Access is gated by the anon RLS policies on the tables, not the buckets.
+- **Schema isolation.** All tables live in the `shorts_app` schema (not `public`); buckets are prefixed `shorts-*`. Keeps this product isolated from other tables in the same Supabase project.
+- **Resumable uploads.** `SupabaseUploader` uses TUS for videos > 50 MB. Partial failures roll back the `shorts` row via typed errors and a logged rollback.
+- **Retry queue.** `PendingUploadsQueue` persists pending uploads so a network blip doesn't lose work.
+- **Caption regeneration.** The iOS app never calls Claude directly. It POSTs to the `regenerate-caption` edge function, which holds the `ANTHROPIC_API_KEY` as a Supabase secret and writes the result back to the `captions` table with `last_edited_by = 'claude_regen'`.
+- **Share intents.** After the native share sheet completes (the user actually handed off to a platform app), iOS writes a `share_intents` row with a best-effort platform mapping from the `UIActivity.ActivityType`. If the user cancels, nothing is written. This gives the Mac feedback on what got posted without requiring OAuth to every platform.
+
+Full task-by-task construction of this pipeline is in `docs/superpowers/plans/2026-04-12-ios-distribution-{01,02,03}-*.md`.
 
 ---
 
