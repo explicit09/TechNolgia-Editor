@@ -6,8 +6,14 @@ import Supabase
 final class SupabaseShortsClient {
     let client: SupabaseClient
 
-    init(url: URL, anonKey: String) {
-        self.client = SupabaseClient(supabaseURL: url, supabaseKey: anonKey)
+    init(url: URL, anonKey: String, schema: String = "shorts_app") {
+        self.client = SupabaseClient(
+            supabaseURL: url,
+            supabaseKey: anonKey,
+            options: SupabaseClientOptions(
+                db: .init(schema: schema)
+            )
+        )
     }
 
     // MARK: - Shorts
