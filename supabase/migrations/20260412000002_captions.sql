@@ -1,6 +1,6 @@
-create table public.captions (
+create table shorts_app.captions (
     id uuid primary key default gen_random_uuid(),
-    short_id uuid not null references public.shorts(id) on delete cascade,
+    short_id uuid not null references shorts_app.shorts(id) on delete cascade,
     platform text not null check (platform in ('youtube_shorts', 'tiktok', 'instagram_reels', 'twitter', 'linkedin')),
     title text,
     body text not null default '',
@@ -10,23 +10,23 @@ create table public.captions (
     unique (short_id, platform)
 );
 
-create index captions_short_id on public.captions (short_id);
+create index captions_short_id on shorts_app.captions (short_id);
 
-alter table public.captions enable row level security;
+alter table shorts_app.captions enable row level security;
 
 create policy "anon read captions"
-on public.captions for select
+on shorts_app.captions for select
 using (true);
 
 -- v1: no user model; all anon clients can update any caption. Acceptable
 -- for a closed 2-user pilot. Tighten to per-user ownership if scope broadens.
 create policy "anon update captions"
-on public.captions for update
+on shorts_app.captions for update
 using (true)
 with check (true);
 
 -- Auto-bump updated_at on every row update.
-create or replace function public.captions_touch_updated_at()
+create or replace function shorts_app.captions_touch_updated_at()
 returns trigger as $$
 begin
     new.updated_at = now();
@@ -35,5 +35,5 @@ end;
 $$ language plpgsql;
 
 create trigger captions_touch_updated_at
-before update on public.captions
-for each row execute function public.captions_touch_updated_at();
+before update on shorts_app.captions
+for each row execute function shorts_app.captions_touch_updated_at();

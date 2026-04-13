@@ -1,4 +1,4 @@
-create table public.shorts (
+create table shorts_app.shorts (
     id uuid primary key default gen_random_uuid(),
     created_at timestamptz not null default now(),
     source_asset text not null,
@@ -16,12 +16,12 @@ create table public.shorts (
     reasoning text not null default ''
 );
 
-create index shorts_created_at_desc on public.shorts (created_at desc);
+create index shorts_created_at_desc on shorts_app.shorts (created_at desc);
 
 -- RLS: anon clients can SELECT only. INSERT/UPDATE/DELETE go through the
 -- service-role key from the Mac uploader, which bypasses RLS by design.
-alter table public.shorts enable row level security;
+alter table shorts_app.shorts enable row level security;
 
 create policy "anon read shorts"
-on public.shorts for select
+on shorts_app.shorts for select
 using (true);

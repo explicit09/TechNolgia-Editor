@@ -46,7 +46,7 @@ serve(async (req) => {
     const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
     const { data: shortRow, error: shortErr } = await supabase
-        .from("shorts")
+        .schema("shorts_app").from("shorts")
         .select("hook, label, reasoning, duration")
         .eq("id", body.short_id)
         .single();
@@ -132,7 +132,7 @@ Include the # prefix in each hashtag string.`;
     }
 
     const { error: updateErr } = await supabase
-        .from("captions")
+        .schema("shorts_app").from("captions")
         .upsert({
             short_id: body.short_id,
             platform: body.platform,
