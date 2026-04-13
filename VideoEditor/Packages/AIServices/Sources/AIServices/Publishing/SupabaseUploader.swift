@@ -77,7 +77,7 @@ public actor SupabaseUploader {
         do {
             // 1. Video
             try await retrying {
-                let req = try await self.client.buildStorageUploadRequest(
+                let req = try self.client.buildStorageUploadRequest(
                     bucket: "shorts-videos", objectPath: videoObjectPath, contentType: "video/mp4"
                 )
                 _ = try await self.client.uploadFile(req, fileURL: artifacts.videoLocalURL)
@@ -86,7 +86,7 @@ public actor SupabaseUploader {
 
             // 2. Thumbnail
             try await retrying {
-                let req = try await self.client.buildStorageUploadRequest(
+                let req = try self.client.buildStorageUploadRequest(
                     bucket: "shorts-thumbnails", objectPath: thumbObjectPath, contentType: "image/png"
                 )
                 _ = try await self.client.uploadData(req, data: artifacts.thumbnailPNGData)
@@ -97,7 +97,7 @@ public actor SupabaseUploader {
             for (i, frameData) in artifacts.candidateFrames.enumerated() {
                 let framePath = "\(idStr)/frame_\(i).jpg"
                 try await retrying {
-                    let req = try await self.client.buildStorageUploadRequest(
+                    let req = try self.client.buildStorageUploadRequest(
                         bucket: "shorts-frames", objectPath: framePath, contentType: "image/jpeg"
                     )
                     _ = try await self.client.uploadData(req, data: frameData)
@@ -123,7 +123,7 @@ public actor SupabaseUploader {
                     "video_size": artifacts.metadata.videoSize,
                     "reasoning": artifacts.metadata.reasoning,
                 ]
-                let req = try await self.client.buildInsertRequest(table: "shorts", body: body)
+                let req = try self.client.buildInsertRequest(table: "shorts", body: body)
                 _ = try await self.client.run(req)
             }
 
@@ -136,7 +136,7 @@ public actor SupabaseUploader {
                     "label_position": "bottom-center",
                     "frame_index": 0,
                 ]
-                let req = try await self.client.buildInsertRequest(table: "thumbnail_settings", body: body)
+                let req = try self.client.buildInsertRequest(table: "thumbnail_settings", body: body)
                 _ = try await self.client.run(req)
             }
 
@@ -154,7 +154,7 @@ public actor SupabaseUploader {
                         "hashtags": draft.hashtags,
                         "last_edited_by": "mac",
                     ]
-                    let req = try await self.client.buildInsertRequest(table: "captions", body: body)
+                    let req = try self.client.buildInsertRequest(table: "captions", body: body)
                     _ = try await self.client.run(req)
                 }
             }
@@ -167,7 +167,7 @@ public actor SupabaseUploader {
         } catch {
             // Rollback: delete every object we uploaded
             for obj in uploadedObjects {
-                let req = await self.client.buildStorageDeleteRequest(bucket: obj.bucket, objectPath: obj.path)
+                let req = self.client.buildStorageDeleteRequest(bucket: obj.bucket, objectPath: obj.path)
                 _ = try? await self.client.session.data(for: req)
             }
             throw error
