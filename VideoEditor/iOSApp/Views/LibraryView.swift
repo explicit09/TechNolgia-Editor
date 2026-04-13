@@ -47,69 +47,46 @@ struct LibraryView: View {
 
     @ViewBuilder
     private var hero: some View {
-        if #available(iOS 26, *) {
-            GlassEffectContainer(spacing: 18) {
-                VStack(alignment: .leading, spacing: 18) {
-                    HStack(alignment: .center) {
-                        Label("Factory to Phone", systemImage: "sparkles.rectangle.stack")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.white.opacity(0.92))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .glassEffect(.regular.tint(.white.opacity(0.14)), in: .capsule)
+        HStack(alignment: .center, spacing: 14) {
+            Image("technolgia_logo_tight")
+                .resizable()
+                .scaledToFit()
+                .frame(height: 36)
 
-                        Spacer()
-
-                        Image("technolgia_logo_tight")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 120)
-                    }
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Review, tune, and ship shorts from anywhere.")
-                            .font(.system(size: 34, weight: .black, design: .rounded))
-                            .foregroundStyle(.white)
-                        Text("This first pass is the shell: shared library, caption editing, thumbnail editing, and posting flow come next.")
-                            .font(.subheadline)
-                            .foregroundStyle(.white.opacity(0.8))
-                    }
-
-                    HStack(spacing: 12) {
-                        Button("Open Library") {}
-                            .buttonStyle(.glassProminent)
-                        Button("See Plan") {}
-                            .buttonStyle(.glass)
-                    }
-                }
-                .padding(22)
-                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-                .glassEffect(.regular.tint(.white.opacity(0.08)), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-            }
-        } else {
-            VStack(alignment: .leading, spacing: 18) {
-                Image("technolgia_logo_tight")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 120)
-                Text("Review, tune, and ship shorts from anywhere.")
-                    .font(.system(size: 34, weight: .black, design: .rounded))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("TechNolgia")
+                    .font(.headline.weight(.bold))
                     .foregroundStyle(.white)
-                Text("This first pass is the shell: shared library, caption editing, thumbnail editing, and posting flow come next.")
-                    .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.8))
+                Text("Factory to Phone")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.65))
             }
-            .padding(22)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+
+            Spacer()
         }
+        .padding(.vertical, 4)
     }
 
     private var statusStrip: some View {
-        HStack(spacing: 12) {
-            MetricPill(title: "Library", value: "Ready")
-            MetricPill(title: "Captions", value: "Soon")
-            MetricPill(title: "Thumbs", value: "Soon")
+        HStack(spacing: 10) {
+            MetricPill(title: "Shorts", value: "\(appState.liveShorts.count)")
+            MetricPill(
+                title: "Total",
+                value: totalDurationLabel
+            )
+            if appState.isLoading {
+                MetricPill(title: "Syncing", value: "…")
+            }
+            Spacer(minLength: 0)
         }
+    }
+
+    private var totalDurationLabel: String {
+        let total = Int(appState.liveShorts.reduce(0) { $0 + $1.duration }.rounded())
+        if total < 60 { return "\(total)s" }
+        let m = total / 60
+        let s = total % 60
+        return s == 0 ? "\(m)m" : "\(m)m \(s)s"
     }
 
     @ViewBuilder
