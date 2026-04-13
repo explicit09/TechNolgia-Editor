@@ -61,6 +61,7 @@ public struct AIToolRegistry: Sendable {
         autoCut,
         analyzeTranscript,
         findViralMoments,
+        uploadShortToLibrary,
         getFullTranscript,
         analyzeAudioEnergy,
         classifyAudio,
@@ -216,6 +217,24 @@ public struct AIToolRegistry: Sendable {
             "min_duration_seconds": .init(type: "number", description: "Minimum clip duration in seconds (default: 15)"),
             "max_duration_seconds": .init(type: "number", description: "Maximum clip duration in seconds (default: 60)"),
         ], required: ["asset_id"])
+    )
+
+    public static let uploadShortToLibrary = AIToolDefinition(
+        name: "upload_short_to_library",
+        description: "Upload an already-exported short (mp4) to the Supabase library so the iOS distribution app can see it. Generates 10 candidate thumbnail frames, writes 5 per-platform caption drafts via Claude, uploads video + thumbnail + frames, and inserts metadata rows. Safe to call multiple times — uses short_id for idempotency.",
+        parameters: .object([
+            "asset_id": .init(type: "string", description: "UUID of the source asset"),
+            "source_start": .init(type: "number", description: "Clip start time in source seconds"),
+            "source_end": .init(type: "number", description: "Clip end time in source seconds"),
+            "video_path": .init(type: "string", description: "Absolute path to the exported MP4 file on disk"),
+            "label": .init(type: "string", description: "Pill label text (short, 2-5 words)"),
+            "hook": .init(type: "string", description: "Original hook quote for this moment"),
+            "evergreen_score": .init(type: "number", description: "0-10; default 0"),
+            "trending_score": .init(type: "number", description: "0-10; default 0"),
+            "platform_fit": .init(type: "array", description: "Platforms this duration fits", items: .init(type: "string")),
+            "reasoning": .init(type: "string", description: "Why-viral explanation"),
+            "source_asset_name": .init(type: "string", description: "Display name of source asset (e.g. podcast episode title)"),
+        ], required: ["asset_id", "source_start", "source_end", "video_path", "label", "hook"])
     )
 
     public static let getFullTranscript = AIToolDefinition(
