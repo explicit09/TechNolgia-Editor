@@ -137,7 +137,7 @@ public final class ClaudeProvider: AIProvider, @unchecked Sendable {
 
         var body: [String: Any] = [
             "model": effectiveModel,
-            "max_tokens": enableWebSearch ? 8192 : 4096,
+            "max_tokens": enableWebSearch ? 32000 : 4096,
             "messages": jsonMessages,
             "system": systemContent,
         ]
