@@ -417,6 +417,23 @@ final class MCPServer {
                     ], "required": ["asset_id"]],
                 ],
                 [
+                    "name": "upload_short_to_library",
+                    "description": "Upload an exported short (MP4) + generated thumbnail + 10 candidate frames + 5 caption drafts to the Supabase library. Requires Supabase env vars configured.",
+                    "inputSchema": ["type": "object", "properties": [
+                        "asset_id": ["type": "string"],
+                        "source_start": ["type": "number"],
+                        "source_end": ["type": "number"],
+                        "video_path": ["type": "string"],
+                        "label": ["type": "string"],
+                        "hook": ["type": "string"],
+                        "evergreen_score": ["type": "number"],
+                        "trending_score": ["type": "number"],
+                        "platform_fit": ["type": "array"],
+                        "reasoning": ["type": "string"],
+                        "source_asset_name": ["type": "string"],
+                    ], "required": ["asset_id", "source_start", "source_end", "video_path", "label", "hook"]],
+                ],
+                [
                     "name": "detect_episodes",
                     "description": "Detect episode boundaries in long recordings. Combines intro phrase detection, energy analysis, transcript continuity, and meta-talk detection (production discussion vs content). Returns episode start/end times with confidence scores and evidence. Run on recordings that contain multiple episodes or mixed content.",
                     "inputSchema": ["type": "object", "properties": [
@@ -809,6 +826,9 @@ final class MCPServer {
         }
         if name == "find_viral_moments" {
             return await handleFindViralMoments(arguments, appState: appState)
+        }
+        if name == "upload_short_to_library" {
+            return await handleUploadShortToLibrary(arguments, appState: appState)
         }
         if name == "detect_episodes" {
             return await handleDetectEpisodes(arguments, appState: appState)
@@ -3437,6 +3457,142 @@ final class MCPServer {
         return results
     }
 
+    // MARK: - Upload Short To Library
+
+    private func handleUploadShortToLibrary(_ args: [String: Any], appState: AppState) async -> String {
+        // Parse arguments
+        guard let assetIDStr = args["asset_id"] as? String,
+              let assetID = UUID(uuidString: assetIDStr),
+              let asset = appState.assets.first(where: { $0.id == assetID }) else {
+            return "Error: Invalid asset_id"
+        }
+        guard let sourceStart = args["source_start"] as? Double,
+              let sourceEnd = args["source_end"] as? Double,
+              sourceEnd > sourceStart else {
+            return "Error: source_start/source_end required and end must be greater than start"
+        }
+        guard let videoPath = args["video_path"] as? String,
+              FileManager.default.fileExists(atPath: videoPath) else {
+            return "Error: video_path must point to an existing file on disk"
+        }
+        guard let label = args["label"] as? String,
+              let hook = args["hook"] as? String else {
+            return "Error: label and hook are required"
+        }
+
+        let evergreen = (args["evergreen_score"] as? Int) ?? (args["evergreen_score"] as? Double).map { Int($0) } ?? 0
+        let trending = (args["trending_score"] as? Int) ?? (args["trending_score"] as? Double).map { Int($0) } ?? 0
+        let platformFit = (args["platform_fit"] as? [String]) ?? []
+        let reasoning = (args["reasoning"] as? String) ?? ""
+        let sourceAssetName = (args["source_asset_name"] as? String) ?? asset.name
+
+        // Configure Supabase client
+        guard let client = SupabaseClient.fromEnvironment() else {
+            return "Error: Supabase not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY in .env."
+        }
+
+        // Load the pre-generated default thumbnail PNG. We reuse the existing
+        // generate_short_thumbnail logic so the stored default matches what the Mac
+        // displays; then we upload that PNG as the "default" alongside candidate JPGs.
+        let thumbTempPath = NSTemporaryDirectory() + "upload_default_thumb_\(UUID()).png"
+        defer { try? FileManager.default.removeItem(atPath: thumbTempPath) }
+
+        // Invoke generate_short_thumbnail inline by calling the same code path
+        let thumbArgs: [String: Any] = [
+            "asset_id": assetIDStr,
+            "source_start": sourceStart,
+            "source_end": sourceEnd,
+            "hook_text": hook,
+            "label_text": label,
+            "template": "technologia_talks",
+            "output_path": thumbTempPath,
+        ]
+        _ = await handleGenerateShortThumbnail(thumbArgs, appState: appState)
+        guard let thumbnailPNGData = FileManager.default.contents(atPath: thumbTempPath) else {
+            return "Error: Thumbnail generation failed — no default PNG"
+        }
+
+        // Build the shortFormConfig by running analyze_for_shorts for this range
+        _ = await handleAnalyzeForShorts([
+            "asset_id": assetIDStr, "start": sourceStart, "end": sourceEnd,
+        ], appState: appState)
+        guard let shortFormConfig = shortFormConfigs[assetID] else {
+            return "Error: Could not build ShortFormConfig for candidate frames"
+        }
+
+        // Extract 10 candidate frames
+        let candidates: [(time: TimeInterval, data: Data)]
+        do {
+            candidates = try await ThumbnailCandidates.extract(
+                sourceURL: resolvedToolMediaURL(for: asset),
+                sourceStart: sourceStart,
+                sourceEnd: sourceEnd,
+                shortFormConfig: shortFormConfig,
+                count: 10
+            )
+        } catch {
+            return "Error: Frame extraction failed — \(error.localizedDescription)"
+        }
+        guard candidates.count >= 5 else {
+            return "Error: Only \(candidates.count) candidate frames could be extracted (need ≥5)"
+        }
+
+        // Generate 5 caption drafts via Claude
+        guard let apiKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] ?? loadAnthropicKey() else {
+            return "Error: ANTHROPIC_API_KEY not configured"
+        }
+        let provider = ClaudeProvider(apiKey: apiKey, model: "claude-sonnet-4-6")
+        let drafter = CaptionDrafter(provider: provider)
+        let duration = sourceEnd - sourceStart
+        let captions: [String: CaptionDraft]
+        do {
+            captions = try await drafter.draftCaptions(
+                hook: hook, reasoning: reasoning, label: label, duration: duration
+            )
+        } catch {
+            return "Error: Caption drafting failed — \(error.localizedDescription)"
+        }
+
+        // Upload
+        let shortID = UUID()
+        let videoURL = URL(fileURLWithPath: videoPath)
+        let videoSize = (try? FileManager.default.attributesOfItem(atPath: videoPath)[.size] as? Int64) ?? 0
+
+        let artifacts = SupabaseUploader.UploadArtifacts(
+            shortID: shortID,
+            videoLocalURL: videoURL,
+            thumbnailPNGData: thumbnailPNGData,
+            candidateFrames: candidates.map(\.data),
+            captions: captions,
+            metadata: .init(
+                sourceAsset: sourceAssetName,
+                hook: hook, label: label, duration: duration,
+                evergreenScore: evergreen, trendingScore: trending,
+                platformFit: platformFit,
+                sourceStart: sourceStart, sourceEnd: sourceEnd,
+                videoSize: videoSize, reasoning: reasoning
+            )
+        )
+
+        let uploader = SupabaseUploader(client: client)
+        do {
+            let result = try await uploader.upload(artifacts)
+            return "Uploaded to library. short_id=\(result.shortID.uuidString). video=\(result.videoPath), thumbnail=\(result.thumbnailPath)"
+        } catch {
+            // Persist to pending queue for retry
+            let pending = PendingUpload(
+                shortID: shortID,
+                videoLocalPath: videoPath,
+                label: label, hook: hook, sourceAssetName: sourceAssetName,
+                sourceStart: sourceStart, sourceEnd: sourceEnd,
+                evergreenScore: evergreen, trendingScore: trending,
+                platformFit: platformFit, reasoning: reasoning
+            )
+            try? PendingUploadsQueue.defaultQueue().append(pending)
+            return "Error: Upload failed — \(error.localizedDescription). Queued for retry."
+        }
+    }
+
     private func handleFindViralMoments(_ args: [String: Any], appState: AppState) async -> String {
         guard let assetIDStr = args["asset_id"] as? String,
               let assetID = UUID(uuidString: assetIDStr),
@@ -3604,9 +3760,11 @@ final class MCPServer {
 
         OUTPUT FORMAT REQUIREMENTS — read carefully:
         - Do your thinking silently. When ready, emit exactly ONE final JSON object wrapped in a ```json code block.
-        - Do NOT include multiple JSON blocks, revisions, or draft attempts. Only the final answer.
+        - NEVER emit a draft-then-fill approach (e.g. placeholder values like "duration_seconds": 0, "reasoning": "placeholder"). Compute each moment's final values BEFORE starting to write JSON. The JSON you write is the final answer, not a scaffold.
+        - NEVER include multiple JSON blocks, revisions, or draft attempts. Only the final answer.
+        - Keep the JSON compact — do not pretty-print with excessive whitespace. Keep "reasoning" to one sentence.
+        - Before emitting any JSON, double-check every clip_end_time > clip_start_time and every duration falls within [\(Int(minDuration)), \(Int(maxDuration))]s. If a moment fails, drop it entirely — do not include a broken entry.
         - No prose before or after the JSON block.
-        - Before emitting, verify every moment: clip_end_time > clip_start_time, duration within [\(Int(minDuration)), \(Int(maxDuration))]s, platform_fit matches duration. Fix or drop any that fail.
 
         Input transcript:
         \(wordJSON)
@@ -3625,17 +3783,33 @@ final class MCPServer {
 
             let rawContent = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
 
-            // Claude may emit multiple JSON blocks while thinking — extract ALL balanced {...}
-            // blocks and try each in reverse (the LAST one is Claude's final answer).
+            // DEBUG: dump Claude's raw response to disk for inspection
+            let debugPath = NSTemporaryDirectory() + "find_viral_moments_raw_response.txt"
+            do {
+                try rawContent.write(toFile: debugPath, atomically: true, encoding: .utf8)
+                print("[find_viral_moments] raw response written to \(debugPath) (\(rawContent.count) chars)")
+            } catch {
+                print("[find_viral_moments] could not write debug file: \(error)")
+            }
+
+            // Claude may emit multiple JSON blocks (drafts, placeholders, final).
+            // Parse ALL balanced blocks and pick the one with the most VALID moments
+            // (not just the last — the last may be a truncated draft with a single stub).
             let candidates = Self.extractJSONObjectsWithMomentsKey(from: rawContent)
             var moments: [[String: Any]] = []
-            for candidate in candidates.reversed() {
-                if let data = candidate.data(using: .utf8),
-                   let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let parsedMoments = parsed["moments"] as? [[String: Any]],
-                   !parsedMoments.isEmpty {
-                    moments = parsedMoments
-                    break
+            for candidate in candidates {
+                guard let data = candidate.data(using: .utf8),
+                      let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let parsedMoments = parsed["moments"] as? [[String: Any]] else { continue }
+                // Count valid moments in this candidate (duration in bounds)
+                let valid = parsedMoments.filter { m in
+                    let s = m["clip_start_time"] as? Double ?? 0
+                    let e = m["clip_end_time"] as? Double ?? 0
+                    let d = e - s
+                    return d >= minDuration && d <= maxDuration
+                }
+                if valid.count > moments.count {
+                    moments = parsedMoments  // keep original (pre-filter); server filter runs below anyway
                 }
             }
             guard !moments.isEmpty else {
