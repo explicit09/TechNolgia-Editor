@@ -43,6 +43,11 @@ App runs at `http://localhost:8420/mcp`. Use `tools/list` to see all available t
 
 API keys go in `VideoEditor/.env`. Check that file for what's needed.
 
+**Supabase:** set `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` from
+the project's Settings → API page. The Mac uploader reads these for
+pushing shorts to the iOS distribution backend. The iOS app must use
+the `anon` key only; never ship `SUPABASE_SERVICE_KEY` in a client app.
+
 ## Skills
 
 Skills are in `.claude/skills/`. The primary workflow is `podcast-episode-producer` — read its SKILL.md before producing episodes.
