@@ -1,9 +1,9 @@
 import Foundation
 import Security
 
-/// Codable token bundle persisted in the Keychain under the key
-/// `linkedin-tokens`. Includes the resolved member URN so the publish flow
-/// doesn't need a fresh `/v2/userinfo` call on every post.
+/// Codable token bundle persisted in the Keychain for LinkedIn. Includes the
+/// resolved member URN so the publish flow doesn't need a fresh `/v2/userinfo`
+/// call on every post.
 struct LinkedInTokens: Codable, Equatable {
     var accessToken: String
     var refreshToken: String?
@@ -20,17 +20,34 @@ struct LinkedInTokens: Codable, Equatable {
     }
 }
 
-/// Thin Keychain-backed store for `LinkedInTokens`. Uses the generic-password
-/// item class with `accessible: AfterFirstUnlock` so background work (e.g.
-/// resumed uploads) can still touch the token after device reboot.
-///
-/// Single key (`linkedin-tokens`) holds the whole JSON-encoded struct as the
-/// keychain value. We store the entire bundle as a blob rather than splitting
-/// fields so refreshes are atomic.
-enum TokenStore {
-    private static let service = "com.videoeditor.shorts.linkedin"
-    private static let account = "linkedin-tokens"
+/// Codable token bundle persisted in the Keychain for YouTube. Stores the
+/// resolved channel id + title so the UI can display "Connected: <channel>"
+/// without a fresh `/youtube/v3/channels?mine=true` call on every render.
+struct YouTubeTokens: Codable, Equatable {
+    var accessToken: String
+    var refreshToken: String?
+    /// Absolute expiration of `accessToken`. UTC.
+    var expiresAt: Date
+    /// YouTube channel ID owned by the signed-in Google account.
+    var channelID: String
+    /// Channel display name (e.g. "TBPN") for the Settings UI.
+    var channelTitle: String?
 
+    /// True if the access token is still safely usable (with a 60s safety window).
+    var isFresh: Bool {
+        Date().addingTimeInterval(60) < expiresAt
+    }
+}
+
+/// Generic Keychain-backed store for any `Codable` token bundle. Each instance
+/// is bound to a `(service, account)` pair so different OAuth providers stay
+/// fully isolated in the Keychain.
+///
+/// Uses the generic-password item class with `accessible: AfterFirstUnlock` so
+/// background work (e.g. resumed uploads) can still touch the token after
+/// device reboot. The entire encoded blob is stored under one key so refreshes
+/// are atomic.
+struct TokenStore<Tokens: Codable> {
     enum StoreError: Error, LocalizedError {
         case encodingFailed(Error)
         case decodingFailed(Error)
@@ -47,8 +64,16 @@ enum TokenStore {
         }
     }
 
+    let service: String
+    let account: String
+
+    init(service: String, account: String) {
+        self.service = service
+        self.account = account
+    }
+
     /// Persist tokens, replacing any existing entry.
-    static func save(_ tokens: LinkedInTokens) throws {
+    func save(_ tokens: Tokens) throws {
         let data: Data
         do {
             data = try JSONEncoder().encode(tokens)
@@ -76,7 +101,7 @@ enum TokenStore {
     }
 
     /// Load tokens. Returns nil if no entry exists; throws on decode/keychain errors.
-    static func load() throws -> LinkedInTokens? {
+    func load() throws -> Tokens? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -94,14 +119,14 @@ enum TokenStore {
         guard let data = result as? Data else { return nil }
 
         do {
-            return try JSONDecoder().decode(LinkedInTokens.self, from: data)
+            return try JSONDecoder().decode(Tokens.self, from: data)
         } catch {
             throw StoreError.decodingFailed(error)
         }
     }
 
     /// Remove tokens. No-op if none exist.
-    static func clear() {
+    func clear() {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -109,4 +134,24 @@ enum TokenStore {
         ]
         SecItemDelete(query as CFDictionary)
     }
+}
+
+// MARK: - Per-provider singletons
+
+extension TokenStore where Tokens == LinkedInTokens {
+    /// LinkedIn token store — service `com.videoeditor.shorts.linkedin`,
+    /// account `linkedin-tokens`.
+    static let linkedIn = TokenStore<LinkedInTokens>(
+        service: "com.videoeditor.shorts.linkedin",
+        account: "linkedin-tokens"
+    )
+}
+
+extension TokenStore where Tokens == YouTubeTokens {
+    /// YouTube token store — service `com.videoeditor.shorts.youtube`,
+    /// account `youtube-tokens`.
+    static let youTube = TokenStore<YouTubeTokens>(
+        service: "com.videoeditor.shorts.youtube",
+        account: "youtube-tokens"
+    )
 }

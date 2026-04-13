@@ -3,22 +3,22 @@ import CryptoKit
 import Foundation
 import UIKit
 
-/// Drives LinkedIn's OAuth 2.0 Authorization Code flow using
-/// ASWebAuthenticationSession. We use PKCE for defense-in-depth even though
-/// LinkedIn still requires the client_secret at the token-exchange step (which
-/// happens server-side in the `linkedin-token-exchange` edge function).
+/// Drives Google's OAuth 2.0 flow for installed iOS applications using
+/// ASWebAuthenticationSession + PKCE. Unlike LinkedIn, Google's iOS flow has
+/// NO client secret, so the entire token exchange happens client-side against
+/// `https://oauth2.googleapis.com/token`.
 ///
 /// Flow:
-///   1. Build the LinkedIn /oauth/v2/authorization URL with state + PKCE challenge
-///   2. ASWebAuthenticationSession opens the LinkedIn page; user signs in
-///   3. LinkedIn 302s back to `com.videoeditor.shorts://linkedin-callback?code=...&state=...`
+///   1. Build the Google /o/oauth2/v2/auth URL with state + PKCE challenge
+///   2. ASWebAuthenticationSession opens the Google sign-in page
+///   3. Google 302s back to `com.googleusercontent.apps.<id>:/oauth2callback?code=...&state=...`
 ///   4. iOS routes the callback to the session completion handler
-///   5. We POST {code, redirect_uri, code_verifier} to the edge function, which
-///      adds client_secret and returns LinkedIn's token response
-///   6. We call /v2/userinfo to resolve `sub` → `urn:li:person:<sub>`
-///   7. Persist `LinkedInTokens` to Keychain
+///   5. We POST {client_id, code, redirect_uri, code_verifier, grant_type} to
+///      Google's token endpoint and parse {access_token, refresh_token, expires_in}
+///   6. We call /youtube/v3/channels?mine=true to resolve the channel ID + title
+///   7. Persist `YouTubeTokens` to Keychain
 @MainActor
-final class LinkedInAuth: NSObject {
+final class YouTubeAuth: NSObject {
     enum AuthError: Error, LocalizedError {
         case notConfigured
         case invalidCallbackURL
@@ -27,31 +27,34 @@ final class LinkedInAuth: NSObject {
         case userCancelled
         case underlying(Error)
         case tokenExchangeFailed(Int, String)
-        case userInfoFailed(Int, String)
+        case channelLookupFailed(Int, String)
+        case noChannel
         case decodeFailed(Error)
 
         var errorDescription: String? {
             switch self {
             case .notConfigured:
-                return "LinkedIn client ID not set. See docs/superpowers/setup/linkedin-setup.md."
-            case .invalidCallbackURL: return "LinkedIn returned an invalid callback URL."
+                return "YouTube client ID not set. See docs/superpowers/setup/youtube-setup.md."
+            case .invalidCallbackURL: return "Google returned an invalid callback URL."
             case .stateMismatch: return "OAuth state mismatch — possible CSRF. Please retry."
             case .missingCode(let detail):
-                return "LinkedIn did not return an authorization code." + (detail.map { " (\($0))" } ?? "")
+                return "Google did not return an authorization code." + (detail.map { " (\($0))" } ?? "")
             case .userCancelled: return "Sign-in cancelled."
             case .underlying(let err): return err.localizedDescription
             case .tokenExchangeFailed(let code, let body):
                 return "Token exchange failed (HTTP \(code)): \(body)"
-            case .userInfoFailed(let code, let body):
-                return "Fetching LinkedIn profile failed (HTTP \(code)): \(body)"
+            case .channelLookupFailed(let code, let body):
+                return "Channel lookup failed (HTTP \(code)): \(body)"
+            case .noChannel:
+                return "Google account has no YouTube channel. Create one at youtube.com first."
             case .decodeFailed(let err): return "Response decode failed: \(err.localizedDescription)"
             }
         }
     }
 
     /// Runs the full authorization flow and returns persisted, ready-to-use tokens.
-    func authorize() async throws -> LinkedInTokens {
-        guard LinkedInConfig.isConfigured else { throw AuthError.notConfigured }
+    func authorize() async throws -> YouTubeTokens {
+        guard YouTubeConfig.isConfigured else { throw AuthError.notConfigured }
 
         let pkce = PKCE.generate()
         let state = Self.randomURLSafe(byteCount: 24)
@@ -63,49 +66,59 @@ final class LinkedInAuth: NSObject {
         guard returnedState == state else { throw AuthError.stateMismatch }
 
         let tokenResponse = try await exchangeCode(code, codeVerifier: pkce.verifier)
-        let userInfo = try await fetchUserInfo(accessToken: tokenResponse.accessToken)
+        let channel = try await fetchPrimaryChannel(accessToken: tokenResponse.accessToken)
 
-        let tokens = LinkedInTokens(
+        let tokens = YouTubeTokens(
             accessToken: tokenResponse.accessToken,
             refreshToken: tokenResponse.refreshToken,
             expiresAt: Date().addingTimeInterval(TimeInterval(tokenResponse.expiresIn)),
-            memberURN: "urn:li:person:\(userInfo.sub)",
-            displayName: userInfo.name
+            channelID: channel.id,
+            channelTitle: channel.title
         )
-        try TokenStore.linkedIn.save(tokens)
+        try TokenStore.youTube.save(tokens)
         return tokens
     }
 
     /// Refreshes the access token using a stored refresh token. Persists the
-    /// updated bundle. Throws `notConfigured` if no refresh token is available.
-    func refresh(using existing: LinkedInTokens) async throws -> LinkedInTokens {
+    /// updated bundle. Throws if no refresh token is available — caller should
+    /// fall back to a full re-authorize.
+    func refresh(using existing: YouTubeTokens) async throws -> YouTubeTokens {
         guard let refreshToken = existing.refreshToken else {
             throw AuthError.missingCode("No refresh token stored")
         }
-        let response = try await postTokenExchange(form: ["refresh_token": refreshToken])
-        let updated = LinkedInTokens(
+        let response = try await postToken(form: [
+            "client_id": YouTubeConfig.clientID,
+            "refresh_token": refreshToken,
+            "grant_type": "refresh_token",
+        ])
+        let updated = YouTubeTokens(
             accessToken: response.accessToken,
+            // Google often omits refresh_token on refresh; keep the existing one.
             refreshToken: response.refreshToken ?? existing.refreshToken,
             expiresAt: Date().addingTimeInterval(TimeInterval(response.expiresIn)),
-            memberURN: existing.memberURN,
-            displayName: existing.displayName
+            channelID: existing.channelID,
+            channelTitle: existing.channelTitle
         )
-        try TokenStore.linkedIn.save(updated)
+        try TokenStore.youTube.save(updated)
         return updated
     }
 
     // MARK: - URL building
 
     private func buildAuthorizationURL(state: String, pkceChallenge: String) throws -> URL {
-        var components = URLComponents(url: LinkedInConfig.authorizationEndpoint, resolvingAgainstBaseURL: false)!
+        var components = URLComponents(url: YouTubeConfig.authorizationEndpoint, resolvingAgainstBaseURL: false)!
         components.queryItems = [
             URLQueryItem(name: "response_type", value: "code"),
-            URLQueryItem(name: "client_id", value: LinkedInConfig.clientID),
-            URLQueryItem(name: "redirect_uri", value: LinkedInConfig.redirectURI),
+            URLQueryItem(name: "client_id", value: YouTubeConfig.clientID),
+            URLQueryItem(name: "redirect_uri", value: YouTubeConfig.redirectURI),
             URLQueryItem(name: "state", value: state),
-            URLQueryItem(name: "scope", value: LinkedInConfig.scopes.joined(separator: " ")),
+            URLQueryItem(name: "scope", value: YouTubeConfig.scopes.joined(separator: " ")),
             URLQueryItem(name: "code_challenge", value: pkceChallenge),
             URLQueryItem(name: "code_challenge_method", value: "S256"),
+            // `offline` + `prompt=consent` ensure we get a refresh_token even on
+            // re-authorization. Without these Google may skip refresh-token issuance.
+            URLQueryItem(name: "access_type", value: "offline"),
+            URLQueryItem(name: "prompt", value: "consent"),
         ]
         guard let url = components.url else { throw AuthError.invalidCallbackURL }
         return url
@@ -116,9 +129,7 @@ final class LinkedInAuth: NSObject {
     private var sessionRetainer: ASWebAuthenticationSession?
 
     private func runWebAuthSession(authURL: URL) async throws -> URL {
-        // The custom-scheme path of our redirect URI (e.g. "com.videoeditor.shorts")
-        // is what ASWebAuthenticationSession uses to decide when to dismiss.
-        guard let scheme = URL(string: LinkedInConfig.redirectURI)?.scheme else {
+        guard let scheme = YouTubeConfig.callbackScheme else {
             throw AuthError.invalidCallbackURL
         }
 
@@ -180,21 +191,20 @@ final class LinkedInAuth: NSObject {
     }
 
     private func exchangeCode(_ code: String, codeVerifier: String) async throws -> TokenResponse {
-        try await postTokenExchange(form: [
+        try await postToken(form: [
+            "client_id": YouTubeConfig.clientID,
             "code": code,
-            "redirect_uri": LinkedInConfig.redirectURI,
+            "redirect_uri": YouTubeConfig.redirectURI,
             "code_verifier": codeVerifier,
+            "grant_type": "authorization_code",
         ])
     }
 
-    private func postTokenExchange(form: [String: String]) async throws -> TokenResponse {
-        var request = URLRequest(url: LinkedInConfig.tokenExchangeURL)
+    private func postToken(form: [String: String]) async throws -> TokenResponse {
+        var request = URLRequest(url: YouTubeConfig.tokenEndpoint)
         request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        // Supabase requires the anon key on edge function calls even with verify_jwt=false.
-        request.setValue("Bearer \(Config.supabaseAnonKey)", forHTTPHeaderField: "Authorization")
-        request.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
-        request.httpBody = try JSONSerialization.data(withJSONObject: form)
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Self.formURLEncode(form).data(using: .utf8)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else {
@@ -211,32 +221,41 @@ final class LinkedInAuth: NSObject {
         }
     }
 
-    // MARK: - User info
+    // MARK: - Channel info
 
-    private struct UserInfo: Decodable {
-        let sub: String
-        let name: String?
-        let email: String?
+    /// (id, title) of the signed-in user's primary YouTube channel.
+    private struct ChannelInfo {
+        let id: String
+        let title: String?
     }
 
-    private func fetchUserInfo(accessToken: String) async throws -> UserInfo {
-        var request = URLRequest(url: URL(string: "https://api.linkedin.com/v2/userinfo")!)
+    private func fetchPrimaryChannel(accessToken: String) async throws -> ChannelInfo {
+        var components = URLComponents(url: YouTubeConfig.apiBase.appendingPathComponent("channels"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "part", value: "snippet"),
+            URLQueryItem(name: "mine", value: "true"),
+        ]
+        var request = URLRequest(url: components.url!)
         request.httpMethod = "GET"
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else {
-            throw AuthError.userInfoFailed(-1, "No HTTP response")
+            throw AuthError.channelLookupFailed(-1, "No HTTP response")
         }
         guard (200..<300).contains(http.statusCode) else {
             let body = String(data: data, encoding: .utf8) ?? "<non-utf8>"
-            throw AuthError.userInfoFailed(http.statusCode, body)
+            throw AuthError.channelLookupFailed(http.statusCode, body)
         }
-        do {
-            return try JSONDecoder().decode(UserInfo.self, from: data)
-        } catch {
-            throw AuthError.decodeFailed(error)
+
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let items = json["items"] as? [[String: Any]],
+              let first = items.first,
+              let id = first["id"] as? String, !id.isEmpty else {
+            throw AuthError.noChannel
         }
+        let title = (first["snippet"] as? [String: Any])?["title"] as? String
+        return ChannelInfo(id: id, title: title)
     }
 
     // MARK: - Helpers
@@ -245,6 +264,22 @@ final class LinkedInAuth: NSObject {
         var bytes = [UInt8](repeating: 0, count: byteCount)
         _ = SecRandomCopyBytes(kSecRandomDefault, byteCount, &bytes)
         return Data(bytes).base64URLEncodedString()
+    }
+
+    /// `application/x-www-form-urlencoded` body for OAuth token requests.
+    private static func formURLEncode(_ form: [String: String]) -> String {
+        // Sort for deterministic output (helpful for debugging / tests).
+        form.keys.sorted().map { key in
+            let v = form[key] ?? ""
+            return "\(percent(key))=\(percent(v))"
+        }.joined(separator: "&")
+    }
+
+    private static func percent(_ s: String) -> String {
+        // RFC 3986 unreserved set; everything else gets percent-encoded.
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        return s.addingPercentEncoding(withAllowedCharacters: allowed) ?? s
     }
 }
 
@@ -280,11 +315,8 @@ private extension Data {
 
 // MARK: - Presentation context
 
-extension LinkedInAuth: ASWebAuthenticationPresentationContextProviding {
+extension YouTubeAuth: ASWebAuthenticationPresentationContextProviding {
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        // Find the first foreground window scene's key window. Fallback to a
-        // fresh ASPresentationAnchor() (which is `UIWindow()`) if none — this
-        // shouldn't happen in normal app states but keeps us safe.
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         let activeScene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first
         if let window = activeScene?.windows.first(where: { $0.isKeyWindow }) ?? activeScene?.windows.first {

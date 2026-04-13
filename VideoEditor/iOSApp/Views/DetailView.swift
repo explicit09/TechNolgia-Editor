@@ -15,6 +15,7 @@ struct DetailView: View {
                 VStack(spacing: 12) {
                     ShareButton(short: short, activeCaption: nil, thumbnailImage: nil)
                     LinkedInPublishButton(short: short)
+                    YouTubePublishButton(short: short)
                 }
                 .padding(.horizontal, 4)
                 .padding(.top, 4)

@@ -13,6 +13,7 @@ struct SettingsView: View {
             }
 
             LinkedInSettingsSection()
+            YouTubeSettingsSection()
 
             Section("Status") {
                 Text("This shell is ready for data wiring.")
