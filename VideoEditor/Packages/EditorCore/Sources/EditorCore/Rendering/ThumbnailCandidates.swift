@@ -5,6 +5,17 @@ import CoreGraphics
 import ImageIO
 import UniformTypeIdentifiers
 
+public enum ThumbnailCandidatesError: Error, CustomStringConvertible {
+    case noFramesExtracted(attempted: Int)
+
+    public var description: String {
+        switch self {
+        case .noFramesExtracted(let n):
+            return "Failed to extract any thumbnail frames (attempted \(n))"
+        }
+    }
+}
+
 /// Produces N post-composition 9:16 JPG frames across a source time range.
 /// Uses the same ShortFormLayoutRenderer the final video uses, so frames match
 /// exactly what iOS will composite the pill+logo on top of.
@@ -38,7 +49,10 @@ public struct ThumbnailCandidates {
             let t = sourceStart + (sourceEnd - sourceStart) * fraction
             let cmTime = CMTime(seconds: t, preferredTimescale: 600)
 
-            guard let cgImage = try? generator.copyCGImage(at: cmTime, actualTime: nil) else {
+            let cgImage: CGImage
+            do {
+                cgImage = try await generator.image(at: cmTime).image
+            } catch {
                 continue
             }
 
@@ -58,6 +72,10 @@ public struct ThumbnailCandidates {
             // Encode as JPEG
             guard let jpgData = encodeJPEG(composedCG, quality: jpegQuality) else { continue }
             results.append((t, jpgData))
+        }
+
+        if results.isEmpty {
+            throw ThumbnailCandidatesError.noFramesExtracted(attempted: count)
         }
 
         return results
