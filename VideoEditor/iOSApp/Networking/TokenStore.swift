@@ -39,6 +39,28 @@ struct YouTubeTokens: Codable, Equatable {
     }
 }
 
+/// Codable token bundle persisted in the Keychain for X (Twitter). Stores the
+/// resolved user id + handle + name so the UI can display "@username" without
+/// a fresh `/2/users/me` call on every render. The handle is also used to
+/// build the tweet URL after publishing.
+struct XTokens: Codable, Equatable {
+    var accessToken: String
+    var refreshToken: String?
+    /// Absolute expiration of `accessToken`. UTC.
+    var expiresAt: Date
+    /// X user id (numeric string).
+    var userID: String
+    /// X handle without the leading `@` (e.g. `tbpn`).
+    var username: String
+    /// Display name (e.g. "TBPN") for the Settings UI.
+    var name: String?
+
+    /// True if the access token is still safely usable (with a 60s safety window).
+    var isFresh: Bool {
+        Date().addingTimeInterval(60) < expiresAt
+    }
+}
+
 /// Generic Keychain-backed store for any `Codable` token bundle. Each instance
 /// is bound to a `(service, account)` pair so different OAuth providers stay
 /// fully isolated in the Keychain.
@@ -153,5 +175,14 @@ extension TokenStore where Tokens == YouTubeTokens {
     static let youTube = TokenStore<YouTubeTokens>(
         service: "com.videoeditor.shorts.youtube",
         account: "youtube-tokens"
+    )
+}
+
+extension TokenStore where Tokens == XTokens {
+    /// X (Twitter) token store — service `com.videoeditor.shorts.x`,
+    /// account `x-tokens`.
+    static let x = TokenStore<XTokens>(
+        service: "com.videoeditor.shorts.x",
+        account: "x-tokens"
     )
 }

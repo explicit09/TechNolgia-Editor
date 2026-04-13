@@ -16,6 +16,7 @@ struct DetailView: View {
                     ShareButton(short: short, activeCaption: nil, thumbnailImage: nil)
                     LinkedInPublishButton(short: short)
                     YouTubePublishButton(short: short)
+                    XPublishButton(short: short)
                 }
                 .padding(.horizontal, 4)
                 .padding(.top, 4)
