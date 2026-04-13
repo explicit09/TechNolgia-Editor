@@ -21,11 +21,24 @@ struct LibraryView: View {
                 VStack(alignment: .leading, spacing: 28) {
                     hero
                     statusStrip
-                    draftSection
+                    liveSection
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 16)
                 .padding(.bottom, 32)
+            }
+            .refreshable { await appState.refreshLibrary() }
+        }
+        .task { await appState.refreshLibrary() }
+        .overlay(alignment: .top) {
+            if let msg = appState.errorMessage {
+                Text(msg)
+                    .font(.caption)
+                    .padding(10)
+                    .background(Color.red.opacity(0.9), in: RoundedRectangle(cornerRadius: 10))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
             }
         }
         .navigationTitle("Distribution")
@@ -99,23 +112,172 @@ struct LibraryView: View {
         }
     }
 
-    private var draftSection: some View {
+    @ViewBuilder
+    private var liveSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Library")
-                .font(.title3.weight(.bold))
-                .foregroundStyle(.white)
+            HStack {
+                Text("Library")
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(.white)
+                Spacer()
+                if appState.isLoading {
+                    ProgressView().tint(.white)
+                }
+                Text("\(appState.liveShorts.count)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.7))
+            }
 
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
-                ForEach(appState.shorts) { short in
-                    NavigationLink {
-                        ShortDetailView(short: short)
-                    } label: {
-                        ShortCard(short: short)
+            if appState.liveShorts.isEmpty && !appState.isLoading {
+                VStack(spacing: 10) {
+                    Image(systemName: "tray")
+                        .font(.system(size: 36))
+                        .foregroundStyle(.white.opacity(0.5))
+                    Text("No shorts yet")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                    Text("Produce some on Mac and they'll appear here.")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.7))
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 40)
+            } else {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
+                    ForEach(appState.liveShorts) { short in
+                        NavigationLink {
+                            LiveShortDetailView(short: short)
+                        } label: {
+                            LiveShortCard(short: short)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
             }
         }
+    }
+}
+
+private struct LiveShortCard: View {
+    let short: Short
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            AsyncImage(url: appState.supabase.publicObjectURL(
+                bucket: "shorts-thumbnails",
+                path: short.id.uuidString.lowercased() + ".png"
+            )) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .aspectRatio(9.0/16.0, contentMode: .fill)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 178)
+                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                case .empty:
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(Color.white.opacity(0.08))
+                        .frame(height: 178)
+                        .overlay(ProgressView().tint(.white))
+                case .failure:
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(Color.white.opacity(0.08))
+                        .frame(height: 178)
+                        .overlay(
+                            Image(systemName: "photo")
+                                .font(.largeTitle)
+                                .foregroundStyle(.white.opacity(0.5))
+                        )
+                @unknown default:
+                    EmptyView()
+                }
+            }
+
+            Text(short.label)
+                .font(.headline.weight(.bold))
+                .foregroundStyle(.white)
+                .lineLimit(2)
+            Text(short.sourceAsset)
+                .font(.subheadline)
+                .foregroundStyle(.white.opacity(0.78))
+                .lineLimit(1)
+            Text(Self.durationLabel(short.duration))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.68))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+    }
+
+    private static func durationLabel(_ seconds: Double) -> String {
+        let s = Int(seconds.rounded())
+        let m = s / 60
+        let r = s % 60
+        return m > 0 ? "\(m):\(String(format: "%02d", r))" : "\(r)s"
+    }
+}
+
+private struct LiveShortDetailView: View {
+    let short: Short
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                AsyncImage(url: appState.supabase.publicObjectURL(
+                    bucket: "shorts-thumbnails",
+                    path: short.id.uuidString.lowercased() + ".png"
+                )) { phase in
+                    if let image = phase.image {
+                        image.resizable().aspectRatio(9.0/16.0, contentMode: .fit)
+                    } else {
+                        Color.white.opacity(0.1).aspectRatio(9.0/16.0, contentMode: .fit)
+                    }
+                }
+                .frame(maxWidth: 300)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .frame(maxWidth: .infinity, alignment: .center)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(short.label)
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(.white)
+                    Text(short.hook)
+                        .font(.body)
+                        .foregroundStyle(.white.opacity(0.85))
+                    HStack(spacing: 8) {
+                        Label("Evergreen \(short.evergreenScore)/10", systemImage: "leaf.fill")
+                        Label("Trending \(short.trendingScore)/10", systemImage: "flame.fill")
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.7))
+                    Text("Source: \(short.sourceAsset) · \(String(format: "%.0f", short.sourceStart))–\(String(format: "%.0f", short.sourceEnd))s")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.6))
+                    Text(short.reasoning)
+                        .font(.footnote)
+                        .foregroundStyle(.white.opacity(0.75))
+                        .padding(.top, 8)
+                }
+            }
+            .padding(20)
+        }
+        .background(
+            LinearGradient(
+                colors: [
+                    Color(red: 8 / 255, green: 12 / 255, blue: 19 / 255),
+                    Color(red: 17 / 255, green: 28 / 255, blue: 47 / 255),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            ).ignoresSafeArea()
+        )
+        .navigationTitle(short.label)
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
