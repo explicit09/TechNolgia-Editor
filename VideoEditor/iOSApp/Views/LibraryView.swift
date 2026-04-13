@@ -153,14 +153,14 @@ private struct LiveShortCard: View {
                         .aspectRatio(9.0/16.0, contentMode: .fill)
                         .frame(maxWidth: .infinity)
                         .frame(height: 178)
-                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 case .empty:
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(Color.white.opacity(0.08))
                         .frame(height: 178)
                         .overlay(ProgressView().tint(.white))
                 case .failure:
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(Color.white.opacity(0.08))
                         .frame(height: 178)
                         .overlay(
@@ -222,7 +222,7 @@ private struct ShortCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(
                     LinearGradient(
                         colors: short.thumbnailGradient.compactMap { hex in
