@@ -39,6 +39,9 @@ final class YouTubeClient {
         case requestFailed(String, Int, String)
         case decodeFailed(String, Error)
         case missingResponseField(String)
+        /// YouTube daily upload quota (default 10,000 units / ~6 uploads) exhausted.
+        /// `videos.insert` returns HTTP 403 with `errors[].reason == "quotaExceeded"`.
+        case quotaExceeded
 
         var errorDescription: String? {
             switch self {
@@ -53,6 +56,8 @@ final class YouTubeClient {
                 return "\(label) decode failed: \(err.localizedDescription)"
             case .missingResponseField(let field):
                 return "YouTube response missing expected field: \(field)"
+            case .quotaExceeded:
+                return "YouTube daily upload quota exceeded — try again tomorrow."
             }
         }
     }
@@ -93,9 +98,14 @@ final class YouTubeClient {
     }
 
     /// Returns a token guaranteed fresh (refreshes if needed and possible).
-    private func validAccessToken() async throws -> YouTubeTokens {
+    ///
+    /// `minimumValidity` is how much life the token must have left before we
+    /// consider it usable. Default 60 s is fine for short requests; long-running
+    /// operations (the upload PUT) should pass a larger window so the token
+    /// can't expire mid-flight.
+    private func validAccessToken(minimumValidity: TimeInterval = 60) async throws -> YouTubeTokens {
         guard let tokens = try TokenStore.youTube.load() else { throw ClientError.notAuthorized }
-        if tokens.isFresh { return tokens }
+        if Date().addingTimeInterval(minimumValidity) < tokens.expiresAt { return tokens }
         if tokens.refreshToken != nil {
             return try await auth.refresh(using: tokens)
         }
@@ -119,10 +129,14 @@ final class YouTubeClient {
         tags: [String],
         categoryID: String = YouTubeConfig.defaultCategoryID,
         privacyStatus: Privacy = .publicVideo,
+        madeForKids: Bool = false,
         progress: ProgressHandler? = nil
     ) async throws -> URL {
         guard YouTubeConfig.isConfigured else { throw ClientError.notConfigured }
-        let tokens = try await validAccessToken()
+        // A 220 MB upload PUT can take several minutes on slow networks. Refresh
+        // now if the access token would expire within 30 min — otherwise a
+        // mid-flight expiry bubbles up as a raw 401. Single-shot PUT is not retried.
+        let tokens = try await validAccessToken(minimumValidity: 30 * 60)
 
         progress?(0.0)
 
@@ -144,6 +158,7 @@ final class YouTubeClient {
             tags: tags,
             categoryID: categoryID,
             privacyStatus: privacyStatus,
+            madeForKids: madeForKids,
             fileSizeBytes: fileSize,
             accessToken: tokens.accessToken
         )
@@ -160,14 +175,20 @@ final class YouTubeClient {
             }
         )
 
-        // 4. Thumbnail (best-effort — phone-verified channels only).
+        // 4. Thumbnail (best-effort).
+        //    The video is already live by this point, so thumbnail failure must
+        //    NEVER abort the publish. Common causes we swallow:
+        //      - 400: image too large / wrong format
+        //      - 403: channel isn't phone-verified
+        //      - 401: access token expired mid-publish
+        //      - 413: payload too large
+        //      - 5xx: transient Google-side issue
+        //    In all cases YouTube auto-generates a cover — cosmetic degrade only.
         if let thumbnailData {
             do {
                 try await setThumbnail(videoID: videoID, pngData: thumbnailData, accessToken: tokens.accessToken)
-            } catch let ClientError.requestFailed(_, code, _) where code == 400 || code == 403 {
-                // Channel isn't phone-verified or thumbnails feature unavailable.
-                // Don't fail the whole publish — YouTube will auto-generate one.
-                NSLog("[YouTube] thumbnails.set rejected (HTTP \(code)); continuing with auto-generated thumbnail.")
+            } catch {
+                NSLog("[YouTube] thumbnails.set failed (\(error.localizedDescription)); continuing with auto-generated thumbnail.")
             }
         }
         progress?(1.0)
@@ -207,6 +228,7 @@ final class YouTubeClient {
         tags: [String],
         categoryID: String,
         privacyStatus: Privacy,
+        madeForKids: Bool,
         fileSizeBytes: Int64,
         accessToken: String
     ) async throws -> URL {
@@ -231,7 +253,7 @@ final class YouTubeClient {
             ],
             "status": [
                 "privacyStatus": privacyStatus.rawValue,
-                "selfDeclaredMadeForKids": false,
+                "selfDeclaredMadeForKids": madeForKids,
             ],
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -242,6 +264,12 @@ final class YouTubeClient {
         }
         guard (200..<300).contains(http.statusCode) else {
             let bodyStr = String(data: data, encoding: .utf8) ?? "<non-utf8>"
+            // 403 with reason=="quotaExceeded" → typed error so the UI can
+            // surface a specific message (daily cap = 10,000 units ≈ 6 uploads).
+            // Other 403s (auth/permission) fall through to the generic error.
+            if http.statusCode == 403, Self.isQuotaExceeded(body: data) {
+                throw ClientError.quotaExceeded
+            }
             throw ClientError.requestFailed("videos.insert init", http.statusCode, bodyStr)
         }
         // Header lookup is case-insensitive in HTTPURLResponse but depend on
@@ -281,6 +309,9 @@ final class YouTubeClient {
         }
         guard (200..<300).contains(http.statusCode) else {
             let bodyStr = String(data: data, encoding: .utf8) ?? "<non-utf8>"
+            if http.statusCode == 403, Self.isQuotaExceeded(body: data) {
+                throw ClientError.quotaExceeded
+            }
             throw ClientError.requestFailed("videos.insert upload", http.statusCode, bodyStr)
         }
 
@@ -323,6 +354,17 @@ final class YouTubeClient {
         if description.lowercased().contains("#shorts") { return description }
         let trimmed = description.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "#Shorts" : "\(trimmed)\n\n#Shorts"
+    }
+
+    /// Inspect a YouTube Data API error body for `errors[].reason == "quotaExceeded"`.
+    /// Shape: `{"error":{"code":403,"errors":[{"reason":"quotaExceeded",...}], ...}}`
+    private static func isQuotaExceeded(body: Data) -> Bool {
+        guard
+            let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+            let error = json["error"] as? [String: Any],
+            let errors = error["errors"] as? [[String: Any]]
+        else { return false }
+        return errors.contains { ($0["reason"] as? String) == "quotaExceeded" }
     }
 }
 

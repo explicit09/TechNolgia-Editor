@@ -52,11 +52,21 @@ enum YouTubeConfig {
     /// Resumable upload base for `videos.insert`.
     static let uploadBase = URL(string: "https://www.googleapis.com/upload/youtube/v3")!
 
-    /// True when a real client ID has been configured.
+    /// True when a real client ID has been configured AND the redirect URI's
+    /// reverse-DNS scheme matches it. Google requires the scheme to contain
+    /// the numeric prefix of the client ID (e.g. clientID `1234567890-abc...`
+    /// → scheme `com.googleusercontent.apps.1234567890-abc`). A mismatch here
+    /// would silently break OAuth at runtime, so we fail closed.
     static var isConfigured: Bool {
-        !clientID.isEmpty
-            && !clientID.contains("REPLACE_WITH_CLIENT_ID")
-            && !redirectURI.contains("REPLACE_WITH_CLIENT_ID")
+        guard !clientID.isEmpty,
+              !clientID.contains("REPLACE_WITH_CLIENT_ID"),
+              !redirectURI.contains("REPLACE_WITH_CLIENT_ID")
+        else { return false }
+        // The numeric prefix of the client ID must appear in the redirect URI.
+        guard let numericPrefix = clientID.split(separator: "-").first.map(String.init),
+              !numericPrefix.isEmpty
+        else { return false }
+        return redirectURI.contains(numericPrefix)
     }
 
     /// The custom URL scheme portion of `redirectURI` (everything before `:`).
