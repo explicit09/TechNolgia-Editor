@@ -73,22 +73,59 @@ public struct CaptionDrafter: Sendable {
         """
     }
 
-    /// Parse Claude's response. Handles optional ```json ... ``` wrapping.
+    /// Parse Claude's response. Tolerates prose before/after the JSON, markdown fences,
+    /// and extraneous wrapper text by extracting the first balanced `{...}` block.
     public static func parseCaptions(from rawText: String) throws -> [String: CaptionDraft] {
-        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Strip optional markdown fence
-        let stripped: String
-        if trimmed.hasPrefix("```") {
-            let lines = trimmed.components(separatedBy: "\n")
-            stripped = lines.dropFirst().dropLast().joined(separator: "\n")
-        } else {
-            stripped = trimmed
+        guard let block = extractFirstJSONObject(from: rawText) else {
+            throw CaptionDrafterError.invalidJSON("no balanced {...} block found in response")
         }
-        guard let data = stripped.data(using: .utf8) else {
+        guard let data = block.data(using: .utf8) else {
             throw CaptionDrafterError.invalidJSON("not utf-8")
         }
-        let decoded = try JSONDecoder().decode([String: CaptionDraft].self, from: data)
-        return decoded
+        do {
+            return try JSONDecoder().decode([String: CaptionDraft].self, from: data)
+        } catch {
+            throw CaptionDrafterError.invalidJSON("\(error.localizedDescription) | raw block: \(block.prefix(200))")
+        }
+    }
+
+    /// Scan `text` for the first balanced top-level JSON object, respecting strings
+    /// and escaped characters. Returns the substring from first `{` to its matching `}`.
+    static func extractFirstJSONObject(from text: String) -> String? {
+        let chars = Array(text)
+        var i = 0
+        // Find first '{'
+        while i < chars.count && chars[i] != "{" { i += 1 }
+        guard i < chars.count else { return nil }
+        let start = i
+        var depth = 0
+        var inString = false
+        var escaped = false
+        while i < chars.count {
+            let c = chars[i]
+            if inString {
+                if escaped {
+                    escaped = false
+                } else if c == "\\" {
+                    escaped = true
+                } else if c == "\"" {
+                    inString = false
+                }
+            } else {
+                if c == "\"" {
+                    inString = true
+                } else if c == "{" {
+                    depth += 1
+                } else if c == "}" {
+                    depth -= 1
+                    if depth == 0 {
+                        return String(chars[start...i])
+                    }
+                }
+            }
+            i += 1
+        }
+        return nil
     }
 }
 
