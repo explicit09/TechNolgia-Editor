@@ -8,10 +8,14 @@ options:
 configs:
   Debug: debug
   Release: release
+packages:
+  supabase-swift:
+    url: https://github.com/supabase/supabase-swift
+    from: 2.0.0
 targets:
   ShortsDistribution:
     type: application
-    supportedDestinations: [iOS]
+    supportedDestinations: [iOS, iOS Simulator]
     sources:
       - path: App
       - path: AppIntents
@@ -21,6 +25,9 @@ targets:
       - path: Cache
       - path: Rendering
       - path: Views
+    dependencies:
+      - package: supabase-swift
+        product: Supabase
     resources:
       - path: Resources/Assets.xcassets
       - path: Resources/technolgia_logo_tight.png
