@@ -65,10 +65,11 @@ struct XTokens: Codable, Equatable {
 /// is bound to a `(service, account)` pair so different OAuth providers stay
 /// fully isolated in the Keychain.
 ///
-/// Uses the generic-password item class with `accessible: AfterFirstUnlock` so
-/// background work (e.g. resumed uploads) can still touch the token after
-/// device reboot. The entire encoded blob is stored under one key so refreshes
-/// are atomic.
+/// Uses the generic-password item class with
+/// `accessible: AfterFirstUnlockThisDeviceOnly` so background work (e.g. resumed
+/// uploads) can still touch the token after device reboot, while blocking
+/// iCloud-backup-based exfiltration of refresh tokens to other devices. The
+/// entire encoded blob is stored under one key so refreshes are atomic.
 struct TokenStore<Tokens: Codable> {
     enum StoreError: Error, LocalizedError {
         case encodingFailed(Error)
@@ -114,7 +115,7 @@ struct TokenStore<Tokens: Codable> {
 
         var addQuery = baseQuery
         addQuery[kSecValueData as String] = data
-        addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
 
         let status = SecItemAdd(addQuery as CFDictionary, nil)
         guard status == errSecSuccess else {

@@ -166,8 +166,7 @@ final class LinkedInClient {
         try await finalizeUpload(
             videoURN: initResponse.video,
             uploadToken: initResponse.uploadToken,
-            etags: etags,
-            accessToken: tokens.accessToken
+            etags: etags
         )
         progress?(0.95)
 
@@ -176,12 +175,104 @@ final class LinkedInClient {
             author: tokens.memberURN,
             commentary: commentary,
             videoURN: initResponse.video,
-            visibility: visibility,
-            accessToken: tokens.accessToken
+            visibility: visibility
         )
         progress?(1.0)
 
         return URL(string: "https://www.linkedin.com/feed/update/\(postURN)")!
+    }
+
+    // MARK: - Retry wrapper
+
+    /// Executes a LinkedIn API call and transparently retries once on 401 by
+    /// refreshing the access token, and once on 429 after the server-advertised
+    /// `Retry-After` delay. `build` is invoked each time so the fresh token is
+    /// picked up on retry.
+    ///
+    /// Callers that need the bearer token should read it from
+    /// `TokenStore.linkedIn.load()` inside `build` — the token may have been
+    /// rotated by the refresh step between attempts.
+    private func performWithRetry(
+        _ build: () async throws -> URLRequest
+    ) async throws -> (Data, URLResponse) {
+        var request = try await build()
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            return (data, response)
+        }
+
+        if http.statusCode == 401 {
+            guard let existing = try TokenStore.linkedIn.load() else {
+                throw ClientError.notAuthorized
+            }
+            guard existing.refreshToken != nil else {
+                throw ClientError.notAuthorized
+            }
+            _ = try await auth.refresh(using: existing)
+            request = try await build()
+            return try await URLSession.shared.data(for: request)
+        }
+
+        if http.statusCode == 429 {
+            let retryAfter = http.value(forHTTPHeaderField: "Retry-After")
+                ?? http.value(forHTTPHeaderField: "retry-after")
+            let seconds = UInt64(retryAfter?.trimmingCharacters(in: .whitespaces) ?? "") ?? 1
+            try await Task.sleep(nanoseconds: seconds * 1_000_000_000)
+            request = try await build()
+            return try await URLSession.shared.data(for: request)
+        }
+
+        return (data, response)
+    }
+
+    /// Upload variant of `performWithRetry` — uses `URLSession.upload(for:from:)`
+    /// rather than `data(for:)` so the raw body bytes stream from the `from:`
+    /// parameter. We always refresh chunk bytes on retry via the `buildBody`
+    /// closure (e.g. to re-read the chunk from disk).
+    private func uploadWithRetry(
+        buildRequest: () async throws -> URLRequest,
+        buildBody: () async throws -> Data
+    ) async throws -> (Data, URLResponse) {
+        var request = try await buildRequest()
+        var body = try await buildBody()
+        let (data, response) = try await URLSession.shared.upload(for: request, from: body)
+        guard let http = response as? HTTPURLResponse else {
+            return (data, response)
+        }
+
+        if http.statusCode == 401 {
+            guard let existing = try TokenStore.linkedIn.load() else {
+                throw ClientError.notAuthorized
+            }
+            guard existing.refreshToken != nil else {
+                throw ClientError.notAuthorized
+            }
+            _ = try await auth.refresh(using: existing)
+            request = try await buildRequest()
+            body = try await buildBody()
+            return try await URLSession.shared.upload(for: request, from: body)
+        }
+
+        if http.statusCode == 429 {
+            let retryAfter = http.value(forHTTPHeaderField: "Retry-After")
+                ?? http.value(forHTTPHeaderField: "retry-after")
+            let seconds = UInt64(retryAfter?.trimmingCharacters(in: .whitespaces) ?? "") ?? 1
+            try await Task.sleep(nanoseconds: seconds * 1_000_000_000)
+            request = try await buildRequest()
+            body = try await buildBody()
+            return try await URLSession.shared.upload(for: request, from: body)
+        }
+
+        return (data, response)
+    }
+
+    /// Read a token from the Keychain for request construction. Throws
+    /// `notAuthorized` if the bundle has been cleared mid-flight.
+    private func currentAccessToken() throws -> String {
+        guard let tokens = try TokenStore.linkedIn.load() else {
+            throw ClientError.notAuthorized
+        }
+        return tokens.accessToken
     }
 
     // MARK: - Download
@@ -296,19 +387,28 @@ final class LinkedInClient {
         var etags: [String] = []
         let total = instructions.count
         for (index, instruction) in instructions.enumerated() {
-            try handle.seek(toOffset: UInt64(instruction.firstByte))
             let length = Int(instruction.lastByte - instruction.firstByte + 1)
-            // FileHandle.read(upToCount:) is appropriate for sequential chunks.
-            let chunk = handle.readData(ofLength: length)
+            // Chunks are processed strictly sequentially, so we can rely on the
+            // file handle's current offset — no need to seek. Read exactly
+            // `length` bytes; `read(upToCount:)` returns the available prefix.
+            let chunk = try handle.read(upToCount: length) ?? Data()
 
-            var request = URLRequest(url: instruction.uploadUrl)
-            request.httpMethod = "PUT"
-            // LinkedIn's pre-signed URLs do not require auth headers; setting
-            // application/octet-stream is documented but optional.
-            request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-            request.httpBody = chunk
-
-            let (data, response) = try await URLSession.shared.upload(for: request, from: chunk)
+            // Cache the chunk bytes so a 401 retry can re-upload without
+            // rewinding the file handle (chunks are only 4 MB so this is cheap).
+            let (data, response) = try await uploadWithRetry(
+                buildRequest: {
+                    var req = URLRequest(url: instruction.uploadUrl)
+                    req.httpMethod = "PUT"
+                    // LinkedIn's pre-signed URLs do not require auth headers;
+                    // setting application/octet-stream is documented but
+                    // optional. `from:` below is the source of truth for the
+                    // body — do NOT also set `httpBody`, or the body would be
+                    // sent twice.
+                    req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+                    return req
+                },
+                buildBody: { chunk }
+            )
             guard let http = response as? HTTPURLResponse else {
                 throw ClientError.uploadChunkFailed(index, -1, "No HTTP response")
             }
@@ -335,10 +435,15 @@ final class LinkedInClient {
     // MARK: - Thumbnail upload
 
     private func uploadThumbnail(_ data: Data, to url: URL) async throws {
-        var request = URLRequest(url: url)
-        request.httpMethod = "PUT"
-        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-        let (respData, response) = try await URLSession.shared.upload(for: request, from: data)
+        let (respData, response) = try await uploadWithRetry(
+            buildRequest: {
+                var req = URLRequest(url: url)
+                req.httpMethod = "PUT"
+                req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+                return req
+            },
+            buildBody: { data }
+        )
         guard let http = response as? HTTPURLResponse else {
             throw ClientError.thumbnailUploadFailed(-1, "No HTTP response")
         }
@@ -353,24 +458,29 @@ final class LinkedInClient {
     private func finalizeUpload(
         videoURN: String,
         uploadToken: String,
-        etags: [String],
-        accessToken: String
+        etags: [String]
     ) async throws {
         var components = URLComponents(url: LinkedInConfig.restAPIBase.appendingPathComponent("rest/videos"), resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "action", value: "finalizeUpload")]
-        var request = standardRESTRequest(url: components.url!, accessToken: accessToken)
-        request.httpMethod = "POST"
+        let url = components.url!
 
-        let body: [String: Any] = [
+        let bodyDict: [String: Any] = [
             "finalizeUploadRequest": [
                 "video": videoURN,
                 "uploadToken": uploadToken,
                 "uploadedPartIds": etags,
             ],
         ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let bodyData = try JSONSerialization.data(withJSONObject: bodyDict)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await performWithRetry { [weak self] in
+            guard let self else { throw ClientError.notAuthorized }
+            let token = try self.currentAccessToken()
+            var req = self.standardRESTRequest(url: url, accessToken: token)
+            req.httpMethod = "POST"
+            req.httpBody = bodyData
+            return req
+        }
         guard let http = response as? HTTPURLResponse else {
             throw ClientError.finalizeFailed(-1, "No HTTP response")
         }
@@ -387,16 +497,22 @@ final class LinkedInClient {
         author: String,
         commentary: String,
         videoURN: String,
-        visibility: Visibility,
-        accessToken: String
+        visibility: Visibility
     ) async throws -> String {
         let url = LinkedInConfig.restAPIBase.appendingPathComponent("rest/posts")
-        var request = standardRESTRequest(url: url, accessToken: accessToken)
-        request.httpMethod = "POST"
 
-        let body: [String: Any] = [
+        // LinkedIn's Posts API uses rest.li "little text" escaping in the
+        // `commentary` field: the characters ( ) < > # \ * _ { } [ ] must be
+        // prefixed with a backslash or the POST returns 422. Enforce the
+        // 3000-character maximum after escaping.
+        let escaped = escapeCommentary(commentary)
+        let trimmed = escaped.count > 3000
+            ? String(escaped.prefix(2997)) + "..."
+            : escaped
+
+        let bodyDict: [String: Any] = [
             "author": author,
-            "commentary": commentary,
+            "commentary": trimmed,
             "visibility": visibility.rawValue,
             "distribution": [
                 "feedDistribution": "MAIN_FEED",
@@ -411,9 +527,16 @@ final class LinkedInClient {
             "lifecycleState": "PUBLISHED",
             "isReshareDisabledByAuthor": false,
         ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let bodyData = try JSONSerialization.data(withJSONObject: bodyDict)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await performWithRetry { [weak self] in
+            guard let self else { throw ClientError.notAuthorized }
+            let token = try self.currentAccessToken()
+            var req = self.standardRESTRequest(url: url, accessToken: token)
+            req.httpMethod = "POST"
+            req.httpBody = bodyData
+            return req
+        }
         guard let http = response as? HTTPURLResponse else {
             throw ClientError.postCreateFailed(-1, "No HTTP response")
         }
@@ -434,6 +557,19 @@ final class LinkedInClient {
             return id
         }
         throw ClientError.missingResponseField("x-restli-id")
+    }
+
+    /// Backslash-escape rest.li "little text" special characters. LinkedIn's
+    /// Posts API otherwise returns 422 on raw parentheses, hashtags, etc.
+    private func escapeCommentary(_ raw: String) -> String {
+        let specials: Set<Character> = ["(", ")", "<", ">", "#", "\\", "*", "_", "{", "}", "[", "]"]
+        var out = ""
+        out.reserveCapacity(raw.count)
+        for c in raw {
+            if specials.contains(c) { out.append("\\") }
+            out.append(c)
+        }
+        return out
     }
 
     // MARK: - Headers

@@ -50,6 +50,15 @@ type RequestBody = Partial<CodeExchangeBody & RefreshBody>;
 
 const LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken";
 
+// Hard-coded allowlist to prevent the edge function from being abused as an
+// open redirector. A malicious caller knowing only the public client_id could
+// otherwise substitute a phishing `redirect_uri` when exchanging a code.
+// Only applied on the authorization-code branch; refresh tokens don't take a
+// redirect URI.
+const ALLOWED_REDIRECT_URIS = new Set([
+    "com.videoeditor.shorts://linkedin-callback",
+]);
+
 const CORS_HEADERS: Record<string, string> = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -96,6 +105,9 @@ serve(async (req) => {
         form.set("grant_type", "refresh_token");
         form.set("refresh_token", body.refresh_token);
     } else if (body.code && body.redirect_uri) {
+        if (!ALLOWED_REDIRECT_URIS.has(body.redirect_uri)) {
+            return jsonResponse({ error: "invalid_redirect_uri" }, 400);
+        }
         form.set("grant_type", "authorization_code");
         form.set("code", body.code);
         form.set("redirect_uri", body.redirect_uri);
