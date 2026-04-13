@@ -1,5 +1,16 @@
 import Foundation
+import os
 import EditorCore
+
+public enum SupabaseUploaderError: Error, CustomStringConvertible {
+    case missingCaption(platform: String)
+
+    public var description: String {
+        switch self {
+        case .missingCaption(let p): return "Missing caption draft for platform: \(p)"
+        }
+    }
+}
 
 public struct UploadResult: Sendable {
     public let shortID: UUID
@@ -12,6 +23,8 @@ public struct UploadResult: Sendable {
 public actor SupabaseUploader {
     private let client: SupabaseClient
     private let maxRetries: Int
+
+    private static let log = Logger(subsystem: "com.videoeditor.app", category: "SupabaseUploader")
 
     public init(client: SupabaseClient, maxRetries: Int = 3) {
         self.client = client
@@ -73,6 +86,7 @@ public actor SupabaseUploader {
         let videoObjectPath = "\(idStr).mp4"
         let thumbObjectPath = "\(idStr).png"
         var uploadedObjects: [(bucket: String, path: String)] = []
+        var shortsRowInserted = false
 
         do {
             // 1. Video
@@ -126,6 +140,7 @@ public actor SupabaseUploader {
                 let req = try self.client.buildInsertRequest(table: "shorts", body: body)
                 _ = try await self.client.run(req)
             }
+            shortsRowInserted = true
 
             // 5. thumbnail_settings defaults
             try await retrying {
@@ -143,7 +158,7 @@ public actor SupabaseUploader {
             // 6. captions × 5
             for platform in CaptionDrafter.platforms {
                 guard let draft = artifacts.captions[platform] else {
-                    throw SupabaseError.httpError(status: 0, body: "Missing caption for \(platform)")
+                    throw SupabaseUploaderError.missingCaption(platform: platform)
                 }
                 try await retrying {
                     let body: [String: Any] = [
@@ -168,9 +183,40 @@ public actor SupabaseUploader {
             // Rollback: delete every object we uploaded
             for obj in uploadedObjects {
                 let req = self.client.buildStorageDeleteRequest(bucket: obj.bucket, objectPath: obj.path)
-                _ = try? await self.client.session.data(for: req)
+                do {
+                    _ = try await self.client.session.data(for: req)
+                } catch {
+                    Self.log.error("Rollback delete failed bucket=\(obj.bucket, privacy: .public) path=\(obj.path, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+                }
+            }
+            // If the shorts row was inserted before failure, delete it so cascades clean up
+            // any partially-inserted thumbnail_settings or captions children.
+            if shortsRowInserted {
+                await bestEffortDeleteShortRow(idStr: idStr)
             }
             throw error
+        }
+    }
+
+    /// Best-effort DELETE of the shorts row by id. Used during rollback; `ON DELETE CASCADE`
+    /// on `thumbnail_settings.short_id` and `captions.short_id` cleans up any child rows.
+    private func bestEffortDeleteShortRow(idStr: String) async {
+        guard var components = URLComponents(string: "\(client.baseURL)/rest/v1/shorts") else { return }
+        components.queryItems = [URLQueryItem(name: "id", value: "eq.\(idStr)")]
+        guard let url = components.url else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "DELETE"
+        req.setValue(client.serviceKey, forHTTPHeaderField: "apikey")
+        req.setValue("Bearer \(client.serviceKey)", forHTTPHeaderField: "Authorization")
+        if let schema = client.schema {
+            req.setValue(schema, forHTTPHeaderField: "Content-Profile")
+        } else {
+            req.setValue("shorts_app", forHTTPHeaderField: "Content-Profile")
+        }
+        do {
+            _ = try await client.session.data(for: req)
+        } catch {
+            Self.log.error("Rollback shorts-row delete failed id=\(idStr, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
         }
     }
 
