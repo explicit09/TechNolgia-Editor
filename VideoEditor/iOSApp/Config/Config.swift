@@ -7,8 +7,8 @@ enum Config {
     static let appName = "TechNolgia"
 
     // Replace these with your actual values from Supabase → Settings → API.
-    static let supabaseURL = URL(string: "https://REPLACE_WITH_PROJECT_REF.supabase.co")!
-    static let supabaseAnonKey = "REPLACE_WITH_ANON_KEY"
+    static let supabaseURL = URL(string: "https://vgkocfbtkzmpklruqmsx.supabase.co")!
+    static let supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZna29jZmJ0a3ptcGtscnVxbXN4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMzNDA3MzksImV4cCI6MjA4ODkxNjczOX0.SD8xentFQo-SpzZJAWfzui7lchCc5CS0Kp2aDrUGaDA"
 
     /// Brand color palette for thumbnail pill. Order matters — UI shows these left-to-right.
     static let brandPalette: [BrandColor] = [
