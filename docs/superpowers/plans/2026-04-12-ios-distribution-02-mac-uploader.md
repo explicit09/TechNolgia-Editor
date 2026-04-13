@@ -6,6 +6,8 @@
 
 **Architecture:** New `SupabaseUploader` class in `AIServices` package wraps the Supabase REST + Storage APIs over `URLSession`. A new `CaptionDrafter` generates the 5 platform captions in one Claude call. A new `ThumbnailCandidates` helper produces 10 post-composition JPG frames reusing `ShortFormLayoutRenderer`. The `handleUploadShortToLibrary` MCP handler orchestrates all of the above with retry + rollback. Failed uploads land in `pending_uploads.json` inside the app's sandbox.
 
+Note: All tables live in the `shorts_app` Postgres schema (deployed in plan 1). The Mac uploader sets the `Content-Profile: shorts_app` header on every PostgREST write so PostgREST routes inserts to the correct schema. Storage buckets are prefixed (`shorts-videos`, `shorts-thumbnails`, `shorts-frames`) for the same isolation reason.
+
 **Tech Stack:** Swift, URLSession, JSONEncoder/JSONSerialization, existing `ClaudeProvider`, `ShortFormLayoutRenderer`, `ThumbnailScorer`.
 
 **Reference spec:** `docs/superpowers/specs/2026-04-12-ios-distribution-app-design.md` — especially `Mac-side upload`.
@@ -76,6 +78,21 @@ struct SupabaseClientTests {
         #expect(request.value(forHTTPHeaderField: "Prefer") == "return=representation")
     }
 
+    @Test("buildInsertRequest sets Content-Profile when schema is provided")
+    func insertRequestSchemaProfile() throws {
+        let client = SupabaseClient(
+            baseURL: URL(string: "https://example.supabase.co")!,
+            serviceKey: "testkey",
+            schema: "shorts_app"
+        )
+        let request = try client.buildInsertRequest(
+            table: "shorts",
+            body: ["id": "abc"]
+        )
+
+        #expect(request.value(forHTTPHeaderField: "Content-Profile") == "shorts_app")
+    }
+
     @Test("buildStorageUploadRequest targets storage endpoint with correct content-type")
     func storageRequestHeaders() throws {
         let client = SupabaseClient(
@@ -83,12 +100,12 @@ struct SupabaseClientTests {
             serviceKey: "testkey"
         )
         let request = try client.buildStorageUploadRequest(
-            bucket: "videos",
+            bucket: "shorts-videos",
             objectPath: "abc.mp4",
             contentType: "video/mp4"
         )
 
-        #expect(request.url?.absoluteString == "https://example.supabase.co/storage/v1/object/videos/abc.mp4")
+        #expect(request.url?.absoluteString == "https://example.supabase.co/storage/v1/object/shorts-videos/abc.mp4")
         #expect(request.httpMethod == "POST")
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer testkey")
         #expect(request.value(forHTTPHeaderField: "Content-Type") == "video/mp4")
@@ -118,11 +135,13 @@ import Foundation
 public struct SupabaseClient: Sendable {
     public let baseURL: URL
     public let serviceKey: String
+    public let schema: String?
     public let session: URLSession
 
-    public init(baseURL: URL, serviceKey: String, session: URLSession = .shared) {
+    public init(baseURL: URL, serviceKey: String, schema: String? = nil, session: URLSession = .shared) {
         self.baseURL = baseURL
         self.serviceKey = serviceKey
+        self.schema = schema
         self.session = session
     }
 
@@ -133,12 +152,13 @@ public struct SupabaseClient: Sendable {
               !key.isEmpty else {
             return nil
         }
-        return SupabaseClient(baseURL: url, serviceKey: key, session: session)
+        let schema = ProcessInfo.processInfo.environment["SUPABASE_SCHEMA"] ?? "shorts_app"
+        return SupabaseClient(baseURL: url, serviceKey: key, schema: schema, session: session)
     }
 
     // MARK: - Request builders
 
-    /// Build an INSERT request into a public table. Body is any JSON-encodable dictionary.
+    /// Build an INSERT request targeting the configured schema. Body is any JSON-encodable dictionary.
     public func buildInsertRequest(table: String, body: [String: Any]) throws -> URLRequest {
         let url = baseURL.appendingPathComponent("rest/v1/\(table)")
         var request = URLRequest(url: url)
@@ -147,6 +167,9 @@ public struct SupabaseClient: Sendable {
         request.setValue(serviceKey, forHTTPHeaderField: "apikey")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("return=representation", forHTTPHeaderField: "Prefer")
+        if let schema = schema {
+            request.setValue(schema, forHTTPHeaderField: "Content-Profile")
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return request
     }
@@ -238,7 +261,7 @@ public enum SupabaseError: Error, LocalizedError {
 cd VideoEditor/Packages/AIServices && swift test --filter SupabaseClientTests 2>&1 | tail -5
 ```
 
-Expected: 2 tests pass.
+Expected: 3 tests pass.
 
 - [ ] **Step 5: Commit**
 
@@ -734,8 +757,8 @@ import EditorCore
 
 public struct UploadResult: Sendable {
     public let shortID: UUID
-    public let videoPath: String       // e.g. "videos/<id>.mp4"
-    public let thumbnailPath: String   // e.g. "thumbnails/<id>.png"
+    public let videoPath: String       // e.g. "shorts-videos/<id>.mp4"
+    public let thumbnailPath: String   // e.g. "shorts-thumbnails/<id>.png"
 }
 
 /// High-level orchestrator. Uploads one short's artifacts + metadata to Supabase.
@@ -809,31 +832,31 @@ public actor SupabaseUploader {
             // 1. Video
             try await retrying {
                 let req = try client.buildStorageUploadRequest(
-                    bucket: "videos", objectPath: videoObjectPath, contentType: "video/mp4"
+                    bucket: "shorts-videos", objectPath: videoObjectPath, contentType: "video/mp4"
                 )
                 _ = try await client.uploadFile(req, fileURL: artifacts.videoLocalURL)
             }
-            uploadedObjects.append(("videos", videoObjectPath))
+            uploadedObjects.append(("shorts-videos", videoObjectPath))
 
             // 2. Thumbnail
             try await retrying {
                 let req = try client.buildStorageUploadRequest(
-                    bucket: "thumbnails", objectPath: thumbObjectPath, contentType: "image/png"
+                    bucket: "shorts-thumbnails", objectPath: thumbObjectPath, contentType: "image/png"
                 )
                 _ = try await client.uploadData(req, data: artifacts.thumbnailPNGData)
             }
-            uploadedObjects.append(("thumbnails", thumbObjectPath))
+            uploadedObjects.append(("shorts-thumbnails", thumbObjectPath))
 
             // 3. Candidate frames
             for (i, frameData) in artifacts.candidateFrames.enumerated() {
                 let framePath = "\(idStr)/frame_\(i).jpg"
                 try await retrying {
                     let req = try client.buildStorageUploadRequest(
-                        bucket: "frames", objectPath: framePath, contentType: "image/jpeg"
+                        bucket: "shorts-frames", objectPath: framePath, contentType: "image/jpeg"
                     )
                     _ = try await client.uploadData(req, data: frameData)
                 }
-                uploadedObjects.append(("frames", framePath))
+                uploadedObjects.append(("shorts-frames", framePath))
             }
 
             // 4. shorts row
@@ -849,8 +872,8 @@ public actor SupabaseUploader {
                     "platform_fit": artifacts.metadata.platformFit,
                     "source_start": artifacts.metadata.sourceStart,
                     "source_end": artifacts.metadata.sourceEnd,
-                    "video_path": "videos/\(videoObjectPath)",
-                    "thumbnail_path": "thumbnails/\(thumbObjectPath)",
+                    "video_path": "shorts-videos/\(videoObjectPath)",
+                    "thumbnail_path": "shorts-thumbnails/\(thumbObjectPath)",
                     "video_size": artifacts.metadata.videoSize,
                     "reasoning": artifacts.metadata.reasoning,
                 ]
@@ -892,8 +915,8 @@ public actor SupabaseUploader {
 
             return UploadResult(
                 shortID: artifacts.shortID,
-                videoPath: "videos/\(videoObjectPath)",
-                thumbnailPath: "thumbnails/\(thumbObjectPath)"
+                videoPath: "shorts-videos/\(videoObjectPath)",
+                thumbnailPath: "shorts-thumbnails/\(thumbObjectPath)"
             )
         } catch {
             // Rollback: delete every object we uploaded
@@ -1201,6 +1224,8 @@ Confirm `VideoEditor/.env` contains:
 SUPABASE_URL=https://<project-ref>.supabase.co
 SUPABASE_SERVICE_KEY=<service_role_key>
 ANTHROPIC_API_KEY=<anthropic_key>
+# Optional — defaults to "shorts_app" in fromEnvironment() if omitted
+SUPABASE_SCHEMA=shorts_app
 ```
 
 And that the file was copied to `~/Library/Containers/com.videoeditor.app/Data/Library/Application Support/VideoEditor/.env`.
@@ -1234,16 +1259,16 @@ curl -s http://localhost:8420/mcp -X POST -H "Content-Type: application/json" -d
 }' --max-time 300 | python3 -c "import json,sys; r=json.load(sys.stdin); print(r.get('result',{}).get('content',[{}])[0].get('text',''))"
 ```
 
-Expected output: `Uploaded to library. short_id=<uuid>. video=videos/<uuid>.mp4, thumbnail=thumbnails/<uuid>.png`.
+Expected output: `Uploaded to library. short_id=<uuid>. video=shorts-videos/<uuid>.mp4, thumbnail=shorts-thumbnails/<uuid>.png`.
 
 - [ ] **Step 4: Verify in Supabase dashboard**
 
-- Table Editor → `shorts`: one new row with the metadata
-- Table Editor → `captions`: 5 new rows, one per platform
-- Table Editor → `thumbnail_settings`: one new row with defaults
-- Storage → `videos`: one new MP4
-- Storage → `thumbnails`: one new PNG
-- Storage → `frames/<short_id>/`: 10 JPGs named frame_0.jpg..frame_9.jpg
+- Table Editor → `shorts_app.shorts`: one new row with the metadata
+- Table Editor → `shorts_app.captions`: 5 new rows, one per platform
+- Table Editor → `shorts_app.thumbnail_settings`: one new row with defaults
+- Storage → `shorts-videos`: one new MP4
+- Storage → `shorts-thumbnails`: one new PNG
+- Storage → `shorts-frames/<short_id>/`: 10 JPGs named frame_0.jpg..frame_9.jpg
 
 - [ ] **Step 5: Test rollback — upload with a broken short**
 
