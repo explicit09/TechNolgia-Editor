@@ -12,6 +12,8 @@ struct SettingsView: View {
                 }
             }
 
+            LinkedInSettingsSection()
+
             Section("Status") {
                 Text("This shell is ready for data wiring.")
                     .foregroundStyle(.secondary)

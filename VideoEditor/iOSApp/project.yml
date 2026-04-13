@@ -38,6 +38,11 @@ targets:
         CFBundleDisplayName: TechNolgia
         UIApplicationSupportsIndirectInputEvents: true
         NSPhotoLibraryAddUsageDescription: "Save shorts to Photos for sharing"
+        CFBundleURLTypes:
+          - CFBundleTypeRole: Editor
+            CFBundleURLName: com.videoeditor.shorts.linkedin
+            CFBundleURLSchemes:
+              - com.videoeditor.shorts
         UILaunchScreen:
           UIColorName: ""
         UISupportedInterfaceOrientations:
