@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** SwiftUI iOS app (iOS 17+) that reads shorts from Supabase, lets the user edit captions + thumbnail, and shares via native share sheet. Two-user app (Tadiwa + Elvis) with baked-in credentials — no sign-in screen.
+**Goal:** SwiftUI iOS app (iOS 17+) that reads shorts from Supabase, lets the user edit captions + thumbnail, and shares via native share sheet. Two-user app (Tadiwa + Elvis) with no sign-in screen. The app ships with the Supabase `anon` key only.
 
 **Architecture:** Single SwiftUI target. Supabase Swift SDK for DB + Storage. AVKit for playback. Core Graphics for live thumbnail rendering. `URLCache` (2GB) for video caching. Settings JSON is source of truth for thumbnail — PNG is only rendered on-demand for sharing.
 
@@ -35,7 +35,7 @@ VideoEditor/iOSApp/
 │   ├── ThumbnailSettings.swift
 │   └── Platform.swift                          # enum with all 5 platforms
 ├── Networking/
-│   ├── SupabaseClient.swift                    # Thin wrapper around supabase-swift
+│   ├── SupabaseClient.swift                    # Thin wrapper around supabase-swift (anon key only)
 │   └── EdgeFunctions.swift                     # regenerate-caption client
 ├── Cache/
 │   ├── VideoCache.swift                        # URLCache config, 2GB quota
@@ -145,8 +145,6 @@ Create `VideoEditor/iOSApp/Info.plist`:
     <string>1</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
-    <key>UIRequiredDeviceCapabilities</key>
-    <array><string>armv7</string></array>
     <key>UISupportedInterfaceOrientations</key>
     <array><string>UIInterfaceOrientationPortrait</string></array>
 </dict>
@@ -222,7 +220,6 @@ import Foundation
 enum Config {
     // Replace these with your actual values from Supabase → Settings → API.
     static let supabaseURL = URL(string: "https://REPLACE_WITH_PROJECT_REF.supabase.co")!
-    static let supabaseServiceKey = "REPLACE_WITH_SERVICE_ROLE_KEY"
     static let supabaseAnonKey = "REPLACE_WITH_ANON_KEY"
 
     /// Brand color palette for thumbnail pill. Order matters — UI shows these left-to-right.
@@ -256,7 +253,7 @@ Open the project in Xcode, select a simulator (iPhone 15 Pro), press Cmd+B. Expe
 
 - [ ] **Step 4: Commit (but don't commit real credentials)**
 
-Make sure `Config.swift` has the REPLACE placeholders, not real keys.
+Make sure `Config.swift` has the REPLACE placeholders, not real keys. Do not add the service-role key to the iOS app.
 
 ```bash
 git add VideoEditor/iOSApp/Config/Config.swift
@@ -315,7 +312,7 @@ final class AppState: ObservableObject {
     init() {
         self.supabase = SupabaseShortsClient(
             url: Config.supabaseURL,
-            serviceKey: Config.supabaseServiceKey
+            anonKey: Config.supabaseAnonKey
         )
         // Configure video cache (2GB disk, 100MB memory) at launch.
         VideoCache.configure()
@@ -523,13 +520,13 @@ git commit -m "feat(ios): add Short/Caption/ThumbnailSettings/Platform models"
 import Foundation
 import Supabase
 
-/// Our domain-specific Supabase client. Uses service-role key (no RLS), since this
-/// is a closed two-user app.
+/// Our domain-specific Supabase client. Uses the anon key only; DB access is
+/// constrained by RLS and media reads come from public buckets.
 final class SupabaseShortsClient {
     let client: SupabaseClient
 
-    init(url: URL, serviceKey: String) {
-        self.client = SupabaseClient(supabaseURL: url, supabaseKey: serviceKey)
+    init(url: URL, anonKey: String) {
+        self.client = SupabaseClient(supabaseURL: url, supabaseKey: anonKey)
     }
 
     // MARK: - Shorts
@@ -603,7 +600,7 @@ final class SupabaseShortsClient {
             .execute()
     }
 
-    // MARK: - Share events
+    // MARK: - Share intents
 
     func recordShare(shortID: UUID, platform: Platform) async throws {
         struct Event: Encodable {
@@ -612,19 +609,19 @@ final class SupabaseShortsClient {
         }
         let event = Event(short_id: shortID.uuidString.lowercased(), platform: platform.rawValue)
         try await client
-            .from("share_events")
+            .from("share_intents")
             .insert(event)
             .execute()
     }
 
     // MARK: - Storage URLs
 
-    /// Produce a signed URL for a storage object that expires after 1 hour.
-    func signedURL(bucket: String, path: String) async throws -> URL {
-        let url = try await client.storage
-            .from(bucket)
-            .createSignedURL(path: path, expiresIn: 3600)
-        return url
+    /// Buckets are public-read in v1; build deterministic public URLs.
+    func publicObjectURL(bucket: String, path: String) -> URL {
+        Config.supabaseURL
+            .appendingPathComponent("storage/v1/object/public")
+            .appendingPathComponent(bucket)
+            .appendingPathComponent(path)
     }
 }
 ```
@@ -641,7 +638,7 @@ Open in Xcode, build (Cmd+B). Expected: Supabase package resolves on first build
 
 ```bash
 git add VideoEditor/iOSApp/Networking/SupabaseClient.swift
-git commit -m "feat(ios): add SupabaseShortsClient for DB + storage + signed URLs"
+git commit -m "feat(ios): add SupabaseShortsClient for DB + storage + public object URLs"
 ```
 
 ---
@@ -778,7 +775,7 @@ struct LibraryCell: View {
     private func loadThumbnail() async {
         // v1: fetch the default thumbnail from Supabase. Later we'll render from settings locally.
         do {
-            let url = try await appState.supabase.signedURL(bucket: "thumbnails", path: short.id.uuidString.lowercased() + ".png")
+            let url = appState.supabase.publicObjectURL(bucket: "thumbnails", path: short.id.uuidString.lowercased() + ".png")
             let (data, _) = try await URLSession.shared.data(from: url)
             thumbnailData = data
         } catch {
@@ -989,7 +986,7 @@ struct DetailView: View {
 
     private func loadVideo() async {
         do {
-            let url = try await appState.supabase.signedURL(
+            let url = appState.supabase.publicObjectURL(
                 bucket: "videos",
                 path: short.id.uuidString.lowercased() + ".mp4"
             )
@@ -1512,7 +1509,7 @@ struct ThumbnailEditorView: View {
                         return (i, img)
                     }
                     do {
-                        let url = try await appState.supabase.signedURL(
+                        let url = appState.supabase.publicObjectURL(
                             bucket: "frames",
                             path: "\(short.id.uuidString.lowercased())/frame_\(i).jpg"
                         )
@@ -1573,7 +1570,7 @@ git commit -m "feat(ios): add ThumbnailEditorView with live render"
 
 ---
 
-## Task 12: Share button + share_events recording
+## Task 12: Share button + share_intents recording
 
 **Files:**
 - Create: `VideoEditor/iOSApp/Views/ShareButton.swift`
@@ -1608,7 +1605,7 @@ struct ShareButton: View {
         .disabled(isPreparing)
         .sheet(isPresented: $showShareSheet) {
             ActivityViewController(items: shareItems)
-                .onDisappear { Task { await recordShareEvent() } }
+                .onDisappear { Task { await recordShareIntent() } }
         }
     }
 
@@ -1617,7 +1614,7 @@ struct ShareButton: View {
         defer { isPreparing = false }
         do {
             // Download video to local temp file
-            let url = try await appState.supabase.signedURL(
+            let url = appState.supabase.publicObjectURL(
                 bucket: "videos",
                 path: "\(short.id.uuidString.lowercased()).mp4"
             )
@@ -1649,9 +1646,9 @@ struct ShareButton: View {
         }
     }
 
-    private func recordShareEvent() async {
+    private func recordShareIntent() async {
         // We don't know which platform the user actually picked from the share sheet.
-        // Record the platform tab that was active.
+        // Record the platform tab that was active as an intent metric.
         guard let cap = activeCaption, let platform = Platform(rawValue: cap.platform) else { return }
         try? await appState.supabase.recordShare(shortID: short.id, platform: platform)
     }
@@ -1694,7 +1691,7 @@ Run on a physical device (share sheet requires real hardware for some apps). Tap
 ```bash
 git add VideoEditor/iOSApp/Views/ShareButton.swift \
        VideoEditor/iOSApp/Views/DetailView.swift
-git commit -m "feat(ios): add ShareButton with download + iOS share sheet + event recording"
+git commit -m "feat(ios): add ShareButton with download + iOS share sheet + share-intent recording"
 ```
 
 ---
@@ -1747,7 +1744,7 @@ Verify the full happy path:
 3. Edit caption → Save → reload app → caption persists
 4. Edit thumbnail label/color/position/frame → Save → reload → persists
 5. Tap Share → iOS share sheet → pick an app → it opens with the video
-6. Check Supabase `share_events` table → new row
+6. Check Supabase `share_intents` table → new row
 
 - [ ] **Step 4: Install on Elvis's device**
 
@@ -1774,4 +1771,4 @@ Plan 3 complete when:
 - Caption editing works per-platform, regenerate calls edge function
 - Thumbnail editor lets user change text, color, position, frame
 - Share sheet successfully hands video to target apps
-- share_events rows recorded on share-sheet dismissal
+- share_intents rows recorded on share-sheet dismissal as intent metrics

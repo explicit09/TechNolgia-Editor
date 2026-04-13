@@ -4,7 +4,7 @@
 
 **Goal:** Stand up the Supabase project (tables, storage buckets, edge function, auth account) that will receive uploads from the Mac and serve the iOS app.
 
-**Architecture:** Supabase hosts: 4 DB tables (`shorts`, `captions`, `thumbnail_settings`, `share_events`), 3 storage buckets (`videos`, `thumbnails`, `frames`), 1 edge function (`regenerate-caption`), 1 shared service account. All private. Mac writes via service role key, iOS reads/writes via service role key baked into the app.
+**Architecture:** Supabase hosts: 4 DB tables (`shorts`, `captions`, `thumbnail_settings`, `share_intents`), 3 storage buckets (`videos`, `thumbnails`, `frames`), 1 edge function (`regenerate-caption`). Mac writes via service-role key. iOS uses the anon key only. Buckets are public-read; DB access is constrained by anon RLS policies.
 
 **Tech Stack:** Supabase (Postgres + Storage + Edge Functions + Auth), Deno (edge function), SQL migrations, `supabase` CLI.
 
@@ -21,7 +21,7 @@ supabase/
 │   ├── 20260412000001_shorts.sql
 │   ├── 20260412000002_captions.sql
 │   ├── 20260412000003_thumbnail_settings.sql
-│   └── 20260412000004_share_events.sql
+│   └── 20260412000004_share_intents.sql
 ├── seeds/
 │   └── buckets.sql             # Create 3 storage buckets (private, 500MB upload limit)
 └── functions/
@@ -118,13 +118,11 @@ create table public.shorts (
 
 create index shorts_created_at_desc on public.shorts (created_at desc);
 
--- Enable RLS but with a permissive policy since we use service-role key.
--- Keeping RLS on protects against accidental anon-key misuse.
 alter table public.shorts enable row level security;
 
-create policy "service role full access"
-on public.shorts for all
-using (auth.role() = 'service_role');
+create policy "anon read shorts"
+on public.shorts for select
+using (true);
 ```
 
 - [ ] **Step 2: Apply the migration**
@@ -172,9 +170,14 @@ create index captions_short_id on public.captions (short_id);
 
 alter table public.captions enable row level security;
 
-create policy "service role full access"
-on public.captions for all
-using (auth.role() = 'service_role');
+create policy "anon read captions"
+on public.captions for select
+using (true);
+
+create policy "anon update captions"
+on public.captions for update
+using (true)
+with check (true);
 
 -- Auto-bump updated_at on every row update.
 create or replace function public.captions_touch_updated_at()
@@ -231,9 +234,14 @@ create table public.thumbnail_settings (
 
 alter table public.thumbnail_settings enable row level security;
 
-create policy "service role full access"
-on public.thumbnail_settings for all
-using (auth.role() = 'service_role');
+create policy "anon read thumbnail settings"
+on public.thumbnail_settings for select
+using (true);
+
+create policy "anon update thumbnail settings"
+on public.thumbnail_settings for update
+using (true)
+with check (true);
 
 create or replace function public.thumbnail_settings_touch_updated_at()
 returns trigger as $$
@@ -263,29 +271,33 @@ git commit -m "feat(supabase): add thumbnail_settings table"
 
 ---
 
-## Task 5: `share_events` table migration
+## Task 5: `share_intents` table migration
 
 **Files:**
-- Create: `supabase/migrations/20260412000004_share_events.sql`
+- Create: `supabase/migrations/20260412000004_share_intents.sql`
 
 - [ ] **Step 1: Write the migration**
 
 ```sql
-create table public.share_events (
+create table public.share_intents (
     id uuid primary key default gen_random_uuid(),
     short_id uuid not null references public.shorts(id) on delete cascade,
     platform text not null check (platform in ('youtube_shorts', 'tiktok', 'instagram_reels', 'twitter', 'linkedin')),
-    shared_at timestamptz not null default now()
+    triggered_at timestamptz not null default now()
 );
 
-create index share_events_short_id on public.share_events (short_id);
-create index share_events_shared_at_desc on public.share_events (shared_at desc);
+create index share_intents_short_id on public.share_intents (short_id);
+create index share_intents_triggered_at_desc on public.share_intents (triggered_at desc);
 
-alter table public.share_events enable row level security;
+alter table public.share_intents enable row level security;
 
-create policy "service role full access"
-on public.share_events for all
-using (auth.role() = 'service_role');
+create policy "anon read share intents"
+on public.share_intents for select
+using (true);
+
+create policy "anon insert share intents"
+on public.share_intents for insert
+with check (true);
 ```
 
 - [ ] **Step 2: Apply and verify**
@@ -297,8 +309,8 @@ supabase db push
 - [ ] **Step 3: Commit**
 
 ```bash
-git add supabase/migrations/20260412000004_share_events.sql
-git commit -m "feat(supabase): add share_events table"
+git add supabase/migrations/20260412000004_share_intents.sql
+git commit -m "feat(supabase): add share_intents table"
 ```
 
 ---
@@ -311,32 +323,32 @@ git commit -m "feat(supabase): add share_events table"
 - [ ] **Step 1: Write the bucket-creation SQL**
 
 ```sql
--- Videos bucket: private, up to 500MB per object (for longer shorts).
+-- Videos bucket: public-read, up to 500MB per object (for longer shorts).
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values ('videos', 'videos', false, 524288000, array['video/mp4'])
+values ('videos', 'videos', true, 524288000, array['video/mp4'])
 on conflict (id) do update set
     public = excluded.public,
     file_size_limit = excluded.file_size_limit,
     allowed_mime_types = excluded.allowed_mime_types;
 
--- Thumbnails bucket: private, up to 10MB per object.
+-- Thumbnails bucket: public-read, up to 10MB per object.
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values ('thumbnails', 'thumbnails', false, 10485760, array['image/png'])
+values ('thumbnails', 'thumbnails', true, 10485760, array['image/png'])
 on conflict (id) do update set
     public = excluded.public,
     file_size_limit = excluded.file_size_limit,
     allowed_mime_types = excluded.allowed_mime_types;
 
--- Frames bucket: private, up to 2MB per object (JPG).
+-- Frames bucket: public-read, up to 2MB per object (JPG).
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values ('frames', 'frames', false, 2097152, array['image/jpeg'])
+values ('frames', 'frames', true, 2097152, array['image/jpeg'])
 on conflict (id) do update set
     public = excluded.public,
     file_size_limit = excluded.file_size_limit,
     allowed_mime_types = excluded.allowed_mime_types;
 
--- Service role has full access via RLS bypass; no per-bucket policy needed
--- because service role key skips RLS entirely.
+-- Buckets are public-read in v1 so iOS can stream media without signed-URL infrastructure.
+-- Mac uploads with service role; iOS never receives the service-role key.
 ```
 
 - [ ] **Step 2: Apply the seed**
@@ -350,7 +362,7 @@ Expected: `Success. No rows returned.` (or row counts if conflict path fires on 
 
 - [ ] **Step 3: Verify buckets exist**
 
-Dashboard → Storage. Confirm three buckets: `videos`, `thumbnails`, `frames`. All private.
+Dashboard → Storage. Confirm three buckets: `videos`, `thumbnails`, `frames`. All public.
 
 - [ ] **Step 4: Commit**
 
@@ -595,7 +607,8 @@ API keys go in `VideoEditor/.env`. Check that file for what's needed.
 
 **Supabase:** set `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` from
 the project's Settings → API page. The Mac uploader reads these for
-pushing shorts to the iOS distribution backend.
+pushing shorts to the iOS distribution backend. The iOS app must use
+the `anon` key only; never ship `SUPABASE_SERVICE_KEY` in a client app.
 ```
 
 - [ ] **Step 3: Set the real values in your `.env`**

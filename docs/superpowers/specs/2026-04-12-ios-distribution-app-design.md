@@ -18,7 +18,7 @@ An iOS companion app for the macOS video editor that lets Tadiwa and Elvis revie
 
 ## Users
 
-Two fixed users: Tadiwa and Elvis. Single shared Supabase account with credentials baked into the app. Both phones see the same library. No user management, no sign-in screen.
+Two fixed users: Tadiwa and Elvis. No end-user sign-in UI. The app ships with low-privilege Supabase client configuration only (`anon` key), never the service-role key. Both phones see the same shared library. No user management.
 
 ## Architecture
 
@@ -35,9 +35,9 @@ MAC (factory, online only during editing)
   └─ Pending-uploads queue in pending_uploads.json for retries
 
 SUPABASE (always on, source of truth)
-  ├─ Auth: single shared account, credentials in iOS app
+  ├─ Auth: no end-user login in v1; iOS uses anon client access only
   ├─ Storage buckets: videos, thumbnails, frames
-  ├─ DB tables: shorts, captions, thumbnail_settings, share_events
+  ├─ DB tables: shorts, captions, thumbnail_settings, share_intents
   └─ Edge Function: regenerate-caption (calls Claude on behalf of iOS)
 
 iOS APP (always works, Mac can be offline)
@@ -75,7 +75,7 @@ iOS APP (always works, Mac can be offline)
    - If video not fully cached, download it (shows progress)
    - Render final thumbnail PNG from current settings
    - Native iOS share sheet opens with video + rendered PNG + caption text
-   - When sheet opens, insert a `share_events` row (assume the share happened)
+   - When sheet opens, insert a `share_intents` row (this records intent to share, not confirmed posting)
 
 ## Data schemas
 
@@ -138,16 +138,17 @@ Brand palette (enforced client-side):
 - Pink/red: `#E91E63`
 - Green: `#00C853`
 
-### Table: `share_events`
+### Table: `share_intents`
 
-Records when a share sheet was opened for a given short + platform.
+Records when the app initiated a share flow for a given short + platform tab.
+This is intentionally an intent metric, not a guaranteed successful post.
 
 | Column       | Type       | Notes                           |
 |--------------|------------|---------------------------------|
 | id           | uuid (PK)  |                                 |
 | short_id     | uuid (FK)  | → shorts.id, cascade delete     |
-| platform     | text       | Which platform tab was active when share was tapped |
-| shared_at    | timestamptz | default now()                   |
+| platform     | text       | Which platform tab was active when Share was tapped |
+| triggered_at | timestamptz | default now()                  |
 
 ### Storage buckets
 
@@ -155,7 +156,7 @@ Records when a share sheet was opened for a given short + platform.
 - `thumbnails/` — object key: `<short_id>.png` (Mac-generated default; iOS never writes here)
 - `frames/` — object key: `<short_id>/frame_N.jpg` where N is 0-9
 
-All buckets private. iOS reads via service-role key baked into the app at build time (acceptable given the closed two-user audience; see iOS credentials section).
+All three buckets are public-read in v1. This is deliberate: the app has no user login, and we are not adding signed-URL infrastructure just to stream media. The iOS app never receives the service-role key.
 
 ## iOS app
 
@@ -163,7 +164,7 @@ All buckets private. iOS reads via service-role key baked into the app at build 
 
 - **SwiftUI** — native, fastest to build for a two-screen app
 - **iOS 17+** — modern SwiftUI APIs, skip backward compatibility
-- **Supabase Swift SDK** — handles auth, storage, DB, realtime (if we want it later)
+- **Supabase Swift SDK** — handles anon client access to DB + storage + edge functions
 - **AVKit** — video playback
 - **URLCache** (2GB) for video caching; in-memory `NSCache` for frames + rendered thumbnails
 
@@ -290,15 +291,17 @@ Anthropic API key held in Supabase secret, not exposed to iOS.
 
 ## iOS app — Supabase credentials
 
-- Baked into the app at build time via `Config.swift` (service-role key).
-- Caveat: anyone with the built IPA can read/write. Acceptable for two-user personal tool. Document as "lock your phone."
+- Baked into the app at build time via `Config.swift`: `SUPABASE_URL` + `anon` key only.
+- The service-role key never ships to iOS.
+- iOS reads public buckets directly and uses scoped anon DB policies for reads/writes.
+- Claude regeneration is done through the edge function, which holds the Anthropic key server-side.
 
 ## Error handling (iOS)
 
 - **Thumbnail save fails:** optimistic local update + toast "saved locally, will sync." Retry on foreground.
 - **Caption regenerate fails:** toast error, keep existing caption.
 - **Video playback 404:** "Video no longer available" card.
-- **Share sheet dismissed without sharing:** no share_events row (we can't tell which platform was actually chosen from the iOS share sheet API anyway, so we record based on the active caption tab when user tapped Share — acknowledged limitation).
+- **Share sheet dismissed without sharing:** we may still have a `share_intents` row because the metric is recorded at share initiation time. This is acceptable because the table tracks share intent, not verified posting.
 
 ## Out of scope
 
@@ -337,5 +340,5 @@ Explicit non-features for v1:
 4. iOS library grid + streaming video player
 5. iOS caption editor (read/write + regenerate)
 6. iOS thumbnail editor (live render + save)
-7. iOS share sheet + cache + share_events
+7. iOS share sheet + cache + share_intents
 8. End-to-end test with real shorts + polish
