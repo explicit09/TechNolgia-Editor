@@ -1628,8 +1628,13 @@ final class MCPServer {
     }
 
     private func loadEnvKey(_ keyName: String) -> String? {
-        let candidates = [
+        let appSupport = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        let candidates: [URL] = [
+            appSupport?.appendingPathComponent("VideoEditor/.env"),
             URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".env"),
+            FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Projects/video-editor/VideoEditor/.env"),
             Bundle.main.bundleURL
                 .deletingLastPathComponent()
                 .deletingLastPathComponent()
@@ -1637,7 +1642,7 @@ final class MCPServer {
                 .deletingLastPathComponent()
                 .deletingLastPathComponent()
                 .appendingPathComponent(".env"),
-        ]
+        ].compactMap { $0 }
         for url in candidates {
             if let contents = try? String(contentsOf: url, encoding: .utf8) {
                 for line in contents.components(separatedBy: .newlines) {
@@ -3486,10 +3491,15 @@ final class MCPServer {
         let reasoning = (args["reasoning"] as? String) ?? ""
         let sourceAssetName = (args["source_asset_name"] as? String) ?? asset.name
 
-        // Configure Supabase client
-        guard let client = SupabaseClient.fromEnvironment() else {
+        // Configure Supabase client. Read from ProcessInfo first, then fall back to
+        // .env files via loadEnvKey (matches the pattern used for ANTHROPIC_API_KEY).
+        let supabaseURLString = ProcessInfo.processInfo.environment["SUPABASE_URL"] ?? loadEnvKey("SUPABASE_URL") ?? ""
+        let supabaseServiceKey = ProcessInfo.processInfo.environment["SUPABASE_SERVICE_KEY"] ?? loadEnvKey("SUPABASE_SERVICE_KEY") ?? ""
+        let supabaseSchema = ProcessInfo.processInfo.environment["SUPABASE_SCHEMA"] ?? loadEnvKey("SUPABASE_SCHEMA") ?? "shorts_app"
+        guard let supabaseURL = URL(string: supabaseURLString), !supabaseServiceKey.isEmpty else {
             return "Error: Supabase not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY in .env."
         }
+        let client = SupabaseClient(baseURL: supabaseURL, serviceKey: supabaseServiceKey, schema: supabaseSchema)
 
         // Load the pre-generated default thumbnail PNG. We reuse the existing
         // generate_short_thumbnail logic so the stored default matches what the Mac
