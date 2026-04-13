@@ -10,7 +10,7 @@ enum MockShorts {
             hook: "The opening claim lands fast and feels like a direct clip title already.",
             thumbnailGradient: ["#0B1320", "#594217"],
             frames: ["Frame 1", "Frame 2", "Frame 3", "Frame 4"],
-            thumbnailSettings: ThumbnailSettings(
+            thumbnailSettings: MockThumbnailSettings(
                 labelText: "ELONS BIGGEST FAN",
                 colorName: "Gold",
                 position: .center,
@@ -32,7 +32,7 @@ enum MockShorts {
             hook: "Debunks the instinct to chase virality before product-market clarity.",
             thumbnailGradient: ["#161A2E", "#762E1D"],
             frames: ["Frame 1", "Frame 2", "Frame 3", "Frame 4"],
-            thumbnailSettings: ThumbnailSettings(
+            thumbnailSettings: MockThumbnailSettings(
                 labelText: "WHY VIRALITY IS FAKE",
                 colorName: "Pink",
                 position: .bottom,
@@ -54,7 +54,7 @@ enum MockShorts {
             hook: "A short, clean infrastructure metaphor that travels well across platforms.",
             thumbnailGradient: ["#132A34", "#305026"],
             frames: ["Frame 1", "Frame 2", "Frame 3", "Frame 4"],
-            thumbnailSettings: ThumbnailSettings(
+            thumbnailSettings: MockThumbnailSettings(
                 labelText: "BUILD THE ROADS FIRST",
                 colorName: "Green",
                 position: .top,

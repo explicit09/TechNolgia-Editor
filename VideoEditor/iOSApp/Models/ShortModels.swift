@@ -47,7 +47,7 @@ struct CaptionDraft: Identifiable, Hashable {
     var id: ShortPlatform { platform }
 }
 
-struct ThumbnailSettings: Hashable {
+struct MockThumbnailSettings: Hashable {
     var labelText: String
     var colorName: String
     var position: ThumbnailGridPosition
@@ -62,6 +62,6 @@ struct ShortItem: Identifiable, Hashable {
     let hook: String
     let thumbnailGradient: [String]
     let frames: [String]
-    var thumbnailSettings: ThumbnailSettings
+    var thumbnailSettings: MockThumbnailSettings
     var captions: [CaptionDraft]
 }
