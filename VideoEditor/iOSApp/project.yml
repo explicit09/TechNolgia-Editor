@@ -25,12 +25,13 @@ targets:
       - path: Cache
       - path: Rendering
       - path: Views
+      - path: Resources/Assets.xcassets
+        buildPhase: resources
+      - path: Resources/technolgia_logo_tight.png
+        buildPhase: resources
     dependencies:
       - package: supabase-swift
         product: Supabase
-    resources:
-      - path: Resources/Assets.xcassets
-      - path: Resources/technolgia_logo_tight.png
     info:
       path: Info.plist
       properties:
