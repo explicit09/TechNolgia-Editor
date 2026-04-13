@@ -10,14 +10,12 @@ struct DetailView: View {
                 playerSection
                 metadataSection
                 ThumbnailEditorView(short: short)
+                SaveThumbnailButton(short: short)
                 CaptionEditorView(short: short)
-                HStack(spacing: 10) {
-                    SaveThumbnailButton(short: short)
-                    ShareButton(short: short, activeCaption: nil, thumbnailImage: nil)
-                }
-                .padding(.horizontal, 4)
-                .padding(.top, 4)
-                .padding(.bottom, 12)
+                ShareButton(short: short, activeCaption: nil, thumbnailImage: nil)
+                    .padding(.horizontal, 4)
+                    .padding(.top, 4)
+                    .padding(.bottom, 12)
             }
             .padding(.horizontal, 20)
             .padding(.top, 16)

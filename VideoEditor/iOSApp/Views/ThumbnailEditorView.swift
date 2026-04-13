@@ -274,7 +274,7 @@ struct ThumbnailEditorView: View {
                 } else {
                     Image(systemName: "square.and.arrow.down")
                 }
-                Text("Save thumbnail")
+                Text("Save settings")
                     .fontWeight(.semibold)
             }
             .frame(maxWidth: .infinity)

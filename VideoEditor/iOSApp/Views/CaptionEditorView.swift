@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Per-platform caption editor with tabs for the five target platforms, inline
 /// editing of title/body/hashtags, save-to-DB, and Claude-powered regenerate.
@@ -17,6 +18,8 @@ struct CaptionEditorView: View {
     @State private var errorMessage: String?
     @State private var successMessage: String?
     @State private var toastTask: Task<Void, Never>?
+    @State private var copiedBody: Bool = false
+    @State private var copyResetTask: Task<Void, Never>?
 
     private let gold = Color(red: 201 / 255, green: 160 / 255, blue: 40 / 255)
     private let fieldFill = Color.white.opacity(0.06)
@@ -122,9 +125,27 @@ struct CaptionEditorView: View {
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Body")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.7))
+                HStack {
+                    Text("Body")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.7))
+                    Spacer()
+                    Button {
+                        copyBody()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: copiedBody ? "checkmark" : "doc.on.doc")
+                                .font(.caption2)
+                            Text(copiedBody ? "Copied" : "Copy")
+                                .font(.caption.weight(.semibold))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(Color.white.opacity(copiedBody ? 0.2 : 0.1)))
+                        .foregroundStyle(.white)
+                    }
+                    .buttonStyle(.plain)
+                }
                 TextEditor(
                     text: Binding(
                         get: { captions[selectedPlatform]?.body ?? "" },
@@ -291,6 +312,19 @@ struct CaptionEditorView: View {
             errorMessage = nil
         } catch {
             errorMessage = "Regenerate failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func copyBody() {
+        guard let body = captions[selectedPlatform]?.body, !body.isEmpty else { return }
+        UIPasteboard.general.string = body
+        copiedBody = true
+        copyResetTask?.cancel()
+        copyResetTask = Task {
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            if !Task.isCancelled {
+                await MainActor.run { copiedBody = false }
+            }
         }
     }
 
