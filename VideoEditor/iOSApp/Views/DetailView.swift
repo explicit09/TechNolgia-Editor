@@ -9,8 +9,8 @@ struct DetailView: View {
             VStack(alignment: .leading, spacing: 20) {
                 playerSection
                 metadataSection
+                EpisodeSection(short: short)
                 ThumbnailEditorView(short: short)
-                SaveThumbnailButton(short: short)
                 CaptionEditorView(short: short)
                 ShareButton(short: short, activeCaption: nil, thumbnailImage: nil)
                     .padding(.horizontal, 4)

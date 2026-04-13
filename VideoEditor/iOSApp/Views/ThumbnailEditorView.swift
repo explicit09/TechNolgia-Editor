@@ -65,7 +65,10 @@ struct ThumbnailEditorView: View {
                     )
                 )
 
-                saveButton
+                HStack(spacing: 10) {
+                    saveButton
+                    SaveThumbnailButton(short: short)
+                }
             } else {
                 Text("Unable to load thumbnail settings.")
                     .font(.footnote)

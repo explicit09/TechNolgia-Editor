@@ -28,6 +28,22 @@ final class SupabaseShortsClient {
         return response
     }
 
+    // MARK: - Episodes
+
+    /// Assign a short to an episode (pass nil to clear).
+    func updateEpisode(shortID: UUID, name: String?, order: Int?) async throws {
+        struct Patch: Encodable {
+            let episode_name: String?
+            let episode_order: Int?
+        }
+        let patch = Patch(episode_name: name, episode_order: order)
+        try await client
+            .from("shorts")
+            .update(patch)
+            .eq("id", value: shortID.uuidString.lowercased())
+            .execute()
+    }
+
     // MARK: - Captions
 
     func listCaptions(forShort shortID: UUID) async throws -> [Caption] {

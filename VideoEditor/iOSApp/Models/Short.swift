@@ -16,6 +16,8 @@ struct Short: Codable, Identifiable, Hashable {
     let thumbnailPath: String
     let videoSize: Int64
     let reasoning: String
+    var episodeName: String?
+    var episodeOrder: Int?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -31,6 +33,8 @@ struct Short: Codable, Identifiable, Hashable {
         case thumbnailPath = "thumbnail_path"
         case videoSize = "video_size"
         case reasoning
+        case episodeName = "episode_name"
+        case episodeOrder = "episode_order"
     }
 
     /// Fits this platform's duration limit.

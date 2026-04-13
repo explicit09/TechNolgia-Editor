@@ -121,14 +121,52 @@ struct LibraryView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 40)
             } else {
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
-                    ForEach(appState.liveShorts) { short in
-                        NavigationLink {
-                            DetailView(short: short)
-                        } label: {
-                            LiveShortCard(short: short)
+                groupedShorts
+            }
+        }
+    }
+
+    /// Groups shorts by `episode_name`, sorts each group by `episode_order`.
+    /// Nil/empty episodes fall into an "Unassigned" section at the bottom.
+    private var groupedShorts: some View {
+        let groups = Dictionary(grouping: appState.liveShorts) { short -> String in
+            let n = (short.episodeName ?? "").trimmingCharacters(in: .whitespaces)
+            return n.isEmpty ? "" : n
+        }
+        let keys = groups.keys.sorted { (a, b) in
+            if a.isEmpty && !b.isEmpty { return false }
+            if b.isEmpty && !a.isEmpty { return true }
+            return a < b
+        }
+        return VStack(alignment: .leading, spacing: 24) {
+            ForEach(keys, id: \.self) { key in
+                let shorts = (groups[key] ?? []).sorted { l, r in
+                    switch (l.episodeOrder, r.episodeOrder) {
+                    case let (.some(a), .some(b)): return a < b
+                    case (.some, .none): return true
+                    case (.none, .some): return false
+                    default: return l.createdAt > r.createdAt
+                    }
+                }
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text(key.isEmpty ? "Unassigned" : key)
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(.white.opacity(0.9))
+                        Text("· \(shorts.count)")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.white.opacity(0.55))
+                        Spacer()
+                    }
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
+                        ForEach(shorts) { short in
+                            NavigationLink {
+                                DetailView(short: short)
+                            } label: {
+                                LiveShortCard(short: short)
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
             }
