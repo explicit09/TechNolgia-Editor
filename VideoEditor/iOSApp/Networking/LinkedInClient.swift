@@ -82,11 +82,11 @@ final class LinkedInClient {
     // MARK: - Authorization surface
 
     var isAuthorized: Bool {
-        (try? TokenStore.load()) != nil
+        (try? TokenStore.linkedIn.load()) != nil
     }
 
     var currentTokens: LinkedInTokens? {
-        try? TokenStore.load()
+        try? TokenStore.linkedIn.load()
     }
 
     /// Run the full OAuth flow. Returns the resolved member URN.
@@ -97,12 +97,12 @@ final class LinkedInClient {
     }
 
     func signOut() {
-        TokenStore.clear()
+        TokenStore.linkedIn.clear()
     }
 
     /// Returns a token guaranteed fresh (refreshes if needed and possible).
     private func validAccessToken() async throws -> LinkedInTokens {
-        guard let tokens = try TokenStore.load() else { throw ClientError.notAuthorized }
+        guard let tokens = try TokenStore.linkedIn.load() else { throw ClientError.notAuthorized }
         if tokens.isFresh { return tokens }
         if tokens.refreshToken != nil {
             return try await auth.refresh(using: tokens)
