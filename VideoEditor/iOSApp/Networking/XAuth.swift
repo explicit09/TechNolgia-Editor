@@ -151,6 +151,11 @@ final class XAuth: NSObject {
                 continuation.resume(returning: callbackURL)
             }
             session.presentationContextProvider = self
+            // `false` reuses the user's Safari cookies, so X auto-detects an
+            // existing X login for a one-tap consent experience. Tradeoff:
+            // signing out of X inside our app only clears Keychain — the
+            // Safari session (and thus next sign-in's pre-filled identity)
+            // survives. Set to `true` if we ever need a "fully isolated" flow.
             session.prefersEphemeralWebBrowserSession = false
             self.sessionRetainer = session
             session.start()
