@@ -89,12 +89,14 @@ public actor SupabaseUploader {
         var shortsRowInserted = false
 
         do {
-            // 1. Video
+            // 1. Video — TUS resumable (supports files > 50 MB).
             try await retrying {
-                let req = try self.client.buildStorageUploadRequest(
-                    bucket: "shorts-videos", objectPath: videoObjectPath, contentType: "video/mp4"
+                try await self.client.uploadFileResumable(
+                    bucket: "shorts-videos",
+                    objectPath: videoObjectPath,
+                    fileURL: artifacts.videoLocalURL,
+                    contentType: "video/mp4"
                 )
-                _ = try await self.client.uploadFile(req, fileURL: artifacts.videoLocalURL)
             }
             uploadedObjects.append(("shorts-videos", videoObjectPath))
 
