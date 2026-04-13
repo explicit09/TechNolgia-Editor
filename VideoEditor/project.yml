@@ -20,8 +20,8 @@ targets:
       - path: VideoEditor
         excludes:
           - Resources
-    resources:
       - path: VideoEditor/Resources/Assets.xcassets
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.videoeditor.app
@@ -34,6 +34,7 @@ targets:
         MACOSX_DEPLOYMENT_TARGET: "14.0"
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Manual
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
       - package: EditorCore
       - package: AIServices
