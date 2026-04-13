@@ -10,7 +10,7 @@ Research for publishing 9:16 ≤60s vertical video (with caption, custom thumbna
 | TikTok | Yes — app audit required for public posts | Any; creator must authorize `video.publish` | Yes, but **private-only** until audited | No | 20–30 h |
 | Instagram Reels | Yes — Meta App Review | Business or Creator linked to FB Page | Yes (rate-limited) | No | 25–40 h |
 | Facebook Reels | Yes — Meta App Review | Facebook Page (admin) | Yes | No | 16–24 h |
-| X (Twitter) | Developer signup + paid tier | Any X account | **No** — Free tier blocks tweet-with-media in practice | Basic $200/mo (pay-per-use default for new signups) | 10–14 h |
+| X (Twitter) | Developer signup | Any X account | Yes — pay-per-use launched Feb 6 2026 | $0.01/post + $0.005/read → **~$0.50–1/mo at 25 posts/mo** (not $200/mo) | 10–14 h |
 | LinkedIn | Product access request ("Share on LinkedIn") | Any member; Company Page needs admin | Yes | No | 14–20 h |
 
 ---
@@ -81,7 +81,12 @@ Research for publishing 9:16 ≤60s vertical video (with caption, custom thumbna
 
 **Content.** MP4, H.264 + AAC. Video ≤140 s for non-verified, ≤10 min for Premium/verified. Max 512 MB. Aspect ratios 1:3 to 3:1; 9:16 accepted. Tweet body ≤280 chars (free/basic), ≤25k (Premium+). Hashtags inline, counted toward the char limit.
 
-**Pricing.** Free tier: posting works but media upload quota is effectively unusable (~85/day). Basic $200/mo: 50,000 post writes/month, 500 media uploads per user per 24 h. Pro $5,000/mo. New pay-per-use: $0.01/write, 2M reads/mo cap.
+**Pricing (updated Feb 2026).** X launched a **pay-per-use** model on Feb 6 2026 that replaces the old "Free tier cripples media" story. Confirmed rates:
+- Content: Create (posting) — **$0.01/post**
+- Posts: Read — $0.005/read
+- User: Read — $0.01/lookup
+
+At a 2-user podcast posting ~25 clips/month: **~$0.50–1/month**. Legacy Free tier users get a one-time $10 voucher on transition, and every $1 spent on X API earns up to 20% back as xAI API credits. Legacy Free tier (1,500 posts/month) still exists for accounts that don't opt in. Basic $200/mo and Pro $5,000/mo tiers remain for high-volume apps but are irrelevant at this volume.
 
 **Gotchas.** (1) No custom thumbnail — a dealbreaker if branding requires one. (2) v1.1 media endpoints **are gone** — any tutorial older than mid-2025 is wrong. (3) Rate limits on Free are per-app AND per-user combined; you cannot scale with user count on Free.
 
@@ -108,9 +113,9 @@ Research for publishing 9:16 ≤60s vertical video (with caption, custom thumbna
 3. **Facebook Reels.** Meta App Review adds 1–3 weeks but is a one-time cost; API itself is straightforward chunked upload with draft/publish control. ~16–24 h.
 4. **Instagram Reels.** Same review gate as FB, plus the "you must host the file on a public URL" requirement forces infra work (Supabase signed URLs). Highest recurring engineering tax. ~25–40 h.
 5. **TikTok.** Audit is the steepest qualitative bar — until you pass, every post is private, so the product literally doesn't work for users. Expect 2–6 weeks from first demo to audit approval. ~20–30 h dev plus audit cycle.
-6. **X — hardest, and not worth it.** Basic tier is $200/mo minimum, no custom thumbnail is a branding cost, v1.1 is gone so all old code examples are dead. Only worth it if distribution on X is strategic.
+6. **X — now viable.** Feb 2026 pay-per-use shifts X from "$200/mo floor" to "~$1/month at our volume". Remaining blockers are cosmetic (no custom thumbnail — X auto-generates from frame 1) and a migration cost (v1.1 sunset so pre-mid-2025 tutorials are dead). Worth ~10–14 h of work.
 
-**Advised rollout order for this project:** LinkedIn → YouTube → Facebook → Instagram → TikTok. Skip X unless specifically requested.
+**Advised rollout order for this project:** LinkedIn → YouTube → X → Facebook → Instagram → TikTok.
 
 ---
 
