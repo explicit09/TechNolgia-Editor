@@ -14,6 +14,7 @@ struct SettingsView: View {
 
             LinkedInSettingsSection()
             YouTubeSettingsSection()
+            XSettingsSection()
 
             Section("Status") {
                 Text("This shell is ready for data wiring.")
