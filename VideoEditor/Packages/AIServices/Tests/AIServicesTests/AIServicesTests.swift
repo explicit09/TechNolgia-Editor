@@ -246,6 +246,18 @@ struct AIServicesTests {
     }
 
     @MainActor
+    @Test("Batch rejects nested remove_silence")
+    func batchRejectsRemoveSilence() throws {
+        let resolver = AIToolResolver()
+        let ops = """
+        [{"tool":"remove_silence","args":{"min_duration":0.5}}]
+        """
+        #expect(throws: AIToolError.self) {
+            try resolver.resolve(toolName: "batch", arguments: ["operations": ops])
+        }
+    }
+
+    @MainActor
     @Test("AppState tools resolve to empty intents (handled upstream)")
     func appStateToolResolution() throws {
         let resolver = AIToolResolver()

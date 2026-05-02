@@ -269,7 +269,7 @@ final class MCPServer {
                 ],
                 [
                     "name": "generate_title",
-                    "description": "Generate a compelling title for the current edit based on transcript content. Analyzes the timeline's clips, reads their transcript, and suggests 3-5 title options ranked by engagement potential.",
+                    "description": "Suggest 3–5 titles for the current timeline using local heuristics (keywords + templates from transcript snippets). Does not call an LLM — options are stylistic patterns, not model-ranked engagement scores.",
                     "inputSchema": ["type": "object", "properties": [
                         "style": ["type": "string", "description": "Title style: 'youtube' (clickable), 'professional' (clean), 'viral' (provocative). Default: youtube"],
                     ], "required": []],
@@ -294,7 +294,7 @@ final class MCPServer {
                 ],
                 [
                     "name": "search_local_broll",
-                    "description": "Search the local B-roll library on the external drive. Returns file paths to matching clips. Faster than search_broll (no API call). Falls back to search_broll if no local matches.",
+                    "description": "Search the local B-roll SQLite library (e.g. under /Volumes/.../BRollLibrary/broll.db). Returns file paths — no automatic fallback to search_broll; if there are no matches or no library, the response tells you to use search_broll for Pexels.",
                     "inputSchema": ["type": "object", "properties": [
                         "query": ["type": "string", "description": "Search keywords (e.g., 'cityscape', 'sunset', 'cooking')"],
                         "energy": ["type": "string", "enum": ["low", "medium", "high"], "description": "Energy level filter. low=calm/ambient, medium=moderate, high=dramatic/fast"],
@@ -392,7 +392,7 @@ final class MCPServer {
                 ],
                 [
                     "name": "get_full_transcript",
-                    "description": "Get the complete transcript with timestamps every 30 seconds. Use this to READ the entire transcript and understand the content structure before making any editing decisions. Returns the full text with [MM:SS] time markers so you can identify episodes, topics, transitions, and content layers.",
+                    "description": "Get the complete transcript with [MM:SS] timestamps at sentence boundaries and long pauses (~0.8s+), not on a fixed 30-second grid. Use to READ the full content before editing.",
                     "inputSchema": ["type": "object", "properties": [
                         "asset_id": ["type": "string", "description": "UUID of the asset"],
                         "start": ["type": "number", "description": "Start time in seconds (optional)"],
@@ -411,7 +411,7 @@ final class MCPServer {
                     "description": "Find the best 15-60 second viral clip moments in a transcribed podcast or interview. Sends the full diarized transcript to Claude which identifies contrarian claims, surprising stats, emotional peaks, quotable one-liners, and self-contained moments that work without prior context. Returns a ranked list with exact word-level timestamps. Requires a transcript with speaker diarization — run transcribe_asset with Deepgram first.",
                     "inputSchema": ["type": "object", "properties": [
                         "asset_id": ["type": "string", "description": "UUID of the asset to analyze"],
-                        "max_moments": ["type": "number", "description": "Maximum number of viral moments to return (default: 10)"],
+                        "max_moments": ["type": "number", "description": "Maximum number of viral moments to return (default: 40)"],
                         "min_duration_seconds": ["type": "number", "description": "Minimum clip duration in seconds (default: 15)"],
                         "max_duration_seconds": ["type": "number", "description": "Maximum clip duration in seconds (default: 180). YouTube Shorts caps at 59s, Reels at 90s, TikTok/LinkedIn go longer. Filter downstream by platform."],
                     ], "required": ["asset_id"]],
@@ -477,8 +477,10 @@ final class MCPServer {
                 ],
                 [
                     "name": "hook_optimize",
-                    "description": "Rearrange a short-form clip to start with its most compelling moment (cold open). Analyzes transcript, finds the best hook sentence, duplicates it to the beginning with a flash transition.",
-                    "inputSchema": ["type": "object", "properties": [:], "required": []],
+                    "description": "Cold-open helper: scores sentences with Claude, duplicates the best hook to timeline 0, shifts other clips right. Does not add a transition effect. Defaults to the first clip on the first video track unless clip_id is set.",
+                    "inputSchema": ["type": "object", "properties": [
+                        "clip_id": ["type": "string", "description": "Optional timeline clip UUID to optimize (must be on the timeline; uses that clip's source range and asset)"],
+                    ], "required": []],
                 ],
                 [
                     "name": "export_for_platform",
@@ -740,13 +742,96 @@ final class MCPServer {
 
     /// Extract the raw tool list from the MCP handler.
     private func buildToolList(appState: AppState) -> [[String: Any]] {
-        // This calls the same code path as tools/list MCP method
-        // We need the tool array — extract from the response builder
-        return toolListCache ?? []
+        if let toolListCache {
+            return toolListCache
+        }
+
+        var tools = AIToolRegistry.allTools.map { tool -> [String: Any] in
+            let schemaData = try? JSONEncoder().encode(tool.parameters)
+            let schema = schemaData.flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? [:]
+            return ["name": tool.name, "description": tool.description, "inputSchema": schema]
+        }
+        tools.append(contentsOf: mcpOnlyAgentFallbackTools())
+        return deduplicatedTools(tools)
     }
 
     /// Cached tool list built during handleRequest
     private var toolListCache: [[String: Any]]?
+
+    private func mcpOnlyAgentFallbackTools() -> [[String: Any]] {
+        [
+            [
+                "name": "import_media",
+                "description": "Import a video, audio, or image file into the project. Returns the asset_id for use with add_to_timeline.",
+                "inputSchema": ["type": "object", "properties": ["file_path": ["type": "string", "description": "Absolute path to the media file"]], "required": ["file_path"]],
+            ],
+            [
+                "name": "add_to_timeline",
+                "description": "Add an imported asset to the timeline. Creates video + linked audio tracks automatically for video assets.",
+                "inputSchema": ["type": "object", "properties": [
+                    "asset_id": ["type": "string", "description": "UUID of the imported asset"],
+                    "start_time": ["type": "number", "description": "Optional start position in seconds on the timeline"],
+                    "track_id": ["type": "string", "description": "Optional target track UUID"],
+                    "source_start": ["type": "number", "description": "Source start time in seconds"],
+                    "source_end": ["type": "number", "description": "Source end time in seconds"],
+                ], "required": ["asset_id"]],
+            ],
+            [
+                "name": "extract_segment",
+                "description": "Extract a source range from an asset and place it at timeline position 0.",
+                "inputSchema": ["type": "object", "properties": [
+                    "asset_id": ["type": "string", "description": "UUID of the asset"],
+                    "source_start": ["type": "number", "description": "Source start time in seconds"],
+                    "source_end": ["type": "number", "description": "Source end time in seconds"],
+                ], "required": ["asset_id", "source_start", "source_end"]],
+            ],
+            [
+                "name": "make_short",
+                "description": "One-click short creation. Extracts the segment, analyzes faces, applies a 9:16 short-form layout, and positions captions.",
+                "inputSchema": ["type": "object", "properties": [
+                    "asset_id": ["type": "string", "description": "UUID of the asset"],
+                    "source_start": ["type": "number", "description": "Source start time in seconds"],
+                    "source_end": ["type": "number", "description": "Source end time in seconds"],
+                    "layout": ["type": "string", "description": "Layout: split, fill_0, fill_1, or auto"],
+                ], "required": ["asset_id", "source_start", "source_end"]],
+            ],
+            [
+                "name": "analyze_for_shorts",
+                "description": "Analyze a video range for short-form layout. Runs face tracking, speaker mapping, and layout decisions.",
+                "inputSchema": ["type": "object", "properties": [
+                    "asset_id": ["type": "string", "description": "UUID of the asset"],
+                    "start": ["type": "number", "description": "Optional start time in seconds"],
+                    "end": ["type": "number", "description": "Optional end time in seconds"],
+                ], "required": ["asset_id"]],
+            ],
+            [
+                "name": "create_short",
+                "description": "Apply the analyzed short-form layout to the current timeline as a 9:16 vertical short.",
+                "inputSchema": ["type": "object", "properties": [
+                    "asset_id": ["type": "string", "description": "UUID of the asset"],
+                    "layout": ["type": "string", "description": "Layout override: split, fill_0, or fill_1"],
+                ], "required": ["asset_id"]],
+            ],
+            [
+                "name": "export_for_platform",
+                "description": "Export the current timeline optimized for a platform such as tiktok, youtube_shorts, or instagram_reels.",
+                "inputSchema": ["type": "object", "properties": [
+                    "platform": ["type": "string", "description": "Target platform name"],
+                    "filename": ["type": "string", "description": "Output filename without extension"],
+                ], "required": ["platform"]],
+            ],
+            [
+                "name": "generate_short_thumbnail",
+                "description": "Generate a 1080x1920 thumbnail for a short from a source range and hook text.",
+                "inputSchema": ["type": "object", "properties": [
+                    "asset_id": ["type": "string", "description": "UUID of the source asset"],
+                    "source_start": ["type": "number", "description": "Clip start time in source seconds"],
+                    "source_end": ["type": "number", "description": "Clip end time in source seconds"],
+                    "hook_text": ["type": "string", "description": "Hook text to overlay"],
+                ], "required": ["asset_id", "source_start", "source_end", "hook_text"]],
+            ],
+        ]
+    }
 
     private func executeToolCall(name: String, arguments: [String: Any], appState: AppState) async -> String {
         // MCP-only tools (not in AIToolRegistry)
@@ -2328,8 +2413,6 @@ final class MCPServer {
 
         case "denoise_audio":
             return "Audio denoise: threshold=\((args["threshold_db"] as? Double) ?? -40)dB."
-        case "denoise_video":
-            return "Video denoise: level=\((args["level"] as? Double) ?? 0.5)."
         case "stabilize_video":
             guard let assetIDStr = args["asset_id"] as? String, let assetID = UUID(uuidString: assetIDStr),
                   let asset = appState.assets.first(where: { $0.id == assetID }) else { return "Error: Invalid asset_id" }
@@ -2366,10 +2449,6 @@ final class MCPServer {
                 return "Manual caption timing applied to clip \(clipID)."
             }
 
-        case "apply_lut":
-            return "LUT configured: \((args["lut_path"] as? String) ?? "none")."
-        case "chroma_key":
-            return "Chroma key: hue=\((args["target_hue"] as? Double) ?? 0.33), tolerance=\((args["tolerance"] as? Double) ?? 0.1)."
         default:
             return "Unknown analysis tool: \(name)"
         }
@@ -4563,54 +4642,14 @@ final class MCPServer {
             return "Error: Invalid time range"
         }
 
-        // Split-then-delete: split clips at boundaries, then ripple-delete
-        // the clips fully within [startTime, endTime].
-        let tolerance = 0.001
-
         do {
-            // Step 1: Split at start_time on the FIRST video track only
-            // (linked clip expansion handles audio automatically)
-            if let clip = appState.timeline.tracks
-                .first(where: { $0.type == .video })?
-                .clips.first(where: {
-                    startTime > $0.timelineRange.start + tolerance
-                    && startTime < $0.timelineRange.end - tolerance
-                }) {
-                try appState.perform(.splitClip(clipID: clip.id, at: startTime), source: .ai)
-            }
-
-            // Step 2: Split at end_time (re-read timeline — splits change clip IDs)
-            if let clip = appState.timeline.tracks
-                .first(where: { $0.type == .video })?
-                .clips.first(where: {
-                    endTime > $0.timelineRange.start + tolerance
-                    && endTime < $0.timelineRange.end - tolerance
-                }) {
-                try appState.perform(.splitClip(clipID: clip.id, at: endTime), source: .ai)
-            }
-
-            // Step 3: Collect all clips fully within [startTime, endTime]
-            let clipsToDelete = appState.timeline.tracks.flatMap(\.clips).filter { clip in
-                clip.timelineRange.start >= startTime - tolerance
-                && clip.timelineRange.end <= endTime + tolerance
-            }.map(\.id)
-
-            guard !clipsToDelete.isEmpty else {
-                return "No clips found within \(String(format: "%.1f", startTime))s-\(String(format: "%.1f", endTime))s."
-            }
-
-            // Step 4: Delete and ripple-close gaps
-            try appState.perform(.deleteClips(clipIDs: clipsToDelete), source: .ai)
-            appState.rippleCloseGaps()
-
-            let pruned = appState.pruneNonRenderableClips()
+            try appState.perform(.removeSection(startTime: startTime, endTime: endTime), source: .ai)
             let duration = endTime - startTime
-
-            // Shift overlay timestamps to account for removed time
-            shiftOverlayTimestamps(appState: appState, cutPoint: startTime, duration: duration)
-
-            let prunedMessage = pruned > 0 ? " Pruned \(pruned) tiny fragment(s)." : ""
-            return "Removed \(String(format: "%.1f", duration))s section (\(String(format: "%.1f", startTime))s-\(String(format: "%.1f", endTime))s). Deleted \(clipsToDelete.count) clip(s). Gaps closed.\(prunedMessage)"
+            return "Removed \(String(format: "%.1f", duration))s section (\(String(format: "%.1f", startTime))s-\(String(format: "%.1f", endTime))s). Gaps closed; tiny fragments pruned; overlay timestamps shifted if needed."
+        } catch CommandError.noClipsInRemoveSectionRange {
+            return "No clips found within \(String(format: "%.1f", startTime))s-\(String(format: "%.1f", endTime))s."
+        } catch CommandError.invalidRemoveSectionRange {
+            return "Error: Invalid time range"
         } catch {
             return "Error: \(error.localizedDescription)"
         }
@@ -4621,24 +4660,17 @@ final class MCPServer {
             return "Error: Missing clip_ids"
         }
 
-        let clipIDs = Set(clipIDStrs.compactMap(UUID.init(uuidString:)))
-
-        // Capture deleted clips' time ranges before deletion for overlay shifting
-        let deletedClips = appState.timeline.tracks.flatMap(\.clips).filter { clipIDs.contains($0.id) }
-        let cutPoint = deletedClips.map(\.timelineRange.start).min() ?? 0
-        let deletedDuration = deletedClips.map { $0.timelineRange.end - $0.timelineRange.start }.reduce(0, +)
+        let clipIDs = clipIDStrs.compactMap(UUID.init(uuidString:))
+        guard !clipIDs.isEmpty else {
+            return "Error: No valid clip IDs in clip_ids"
+        }
 
         do {
-            try appState.perform(.deleteClips(clipIDs: Array(clipIDs)), source: .ai)
-            appState.rippleCloseGaps()
-
-            // Shift overlay timestamps to account for removed time
-            if deletedDuration > 0 {
-                shiftOverlayTimestamps(appState: appState, cutPoint: cutPoint, duration: deletedDuration)
-            }
-
+            try appState.perform(.rippleDeleteClips(clipIDs: clipIDs), source: .ai)
             let remaining = appState.timeline.tracks.flatMap(\.clips).count
-            return "Deleted \(clipIDs.count) clip(s) and closed gaps. \(remaining) clip(s) remaining."
+            return "Ripple-deleted \(clipIDs.count) clip id(s) (linked clips expanded). Gaps closed. \(remaining) clip(s) remaining."
+        } catch CommandError.rippleDeleteEmpty {
+            return "Error: ripple_delete requires at least one valid clip_id"
         } catch {
             return "Error: \(error.localizedDescription)"
         }
@@ -5143,10 +5175,19 @@ final class MCPServer {
     // MARK: - Hook Optimize
 
     private func handleHookOptimize(_ args: [String: Any], appState: AppState) async -> String {
-        // 1. Get first video clip
-        guard let videoTrack = appState.timeline.tracks.first(where: { $0.type == .video }),
-              let clip = videoTrack.clips.first else {
-            return "Error: No video clip on timeline"
+        // 1. Resolve target clip: explicit clip_id, else first clip on first video track
+        let clip: Clip
+        if let idStr = args["clip_id"] as? String, let clipID = UUID(uuidString: idStr) {
+            guard let found = appState.timeline.tracks.flatMap(\.clips).first(where: { $0.id == clipID }) else {
+                return "Error: clip_id not found on timeline"
+            }
+            clip = found
+        } else {
+            guard let videoTrack = appState.timeline.tracks.first(where: { $0.type == .video }),
+                  let first = videoTrack.clips.first else {
+                return "Error: No video clip on timeline"
+            }
+            clip = first
         }
 
         guard let asset = appState.assets.first(where: { $0.id == clip.assetID }) else {

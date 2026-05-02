@@ -284,11 +284,6 @@ final class AIChatController {
         )
 
         do {
-            // Analysis/processing tools — handled here (need AppState)
-            if let analysisResult = await handleAnalysisTool(name: toolCall.name, args: args, appState: appState) {
-                return .init(toolName: toolCall.name, success: true, message: analysisResult)
-            }
-
             // Content analysis tools — delegate to shared handlers
             let contentAnalysisTools = [
                 "get_state", "auto_cut", "analyze_transcript", "get_full_transcript",

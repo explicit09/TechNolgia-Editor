@@ -1,0 +1,128 @@
+{
+  "_comment": "Source-of-truth tool inventory extracted directly from VideoEditor/Packages/AIServices/Sources/AIServices/Tools/AIToolRegistry.swift (allTools array, lines 8-110) and VideoEditor/VideoEditor/App/MCPServer.swift (inline append block at line 187-650 + mcpOnlyAgentFallbackTools() at line 759). After deduplicatedTools() merge, MCP-only schemas WIN over registry schemas for any name appearing in both. This file should be regenerated whenever AIToolRegistry.allTools or the MCP append block changes. To regenerate from a live app instead: cd VideoEditor/Tools && python3 mcp_visual_harness.py inventory-tools --json",
+  "_generated": "2026-05-02 from source code (MCP server was not running)",
+  "registry_count": 91,
+  "mcp_only_extra_count": 39,
+  "duplicates_count": 17,
+  "unique_total": 130,
+  "registry_tools": [
+    "add_track", "insert_clip", "move_clip", "delete_clips", "split_clip",
+    "trim_clip", "set_marker", "remove_silence", "set_clip_volume",
+    "set_clip_opacity", "set_clip_speed", "mute_track", "duplicate_clip",
+    "set_clip_effect", "remove_section", "ripple_delete", "normalize_audio",
+    "remove_track", "lock_track", "set_track_volume", "rename_clip",
+    "set_clip_transition", "delete_marker", "set_clip_transform",
+    "set_clip_keyframes", "roll_trim", "slip_clip", "ripple_trim",
+    "auto_reframe", "detect_beats", "score_thumbnails", "suggest_broll",
+    "apply_person_mask", "track_object", "voice_cleanup", "denoise_audio",
+    "denoise_video", "stabilize_video", "set_caption_style", "apply_lut",
+    "measure_loudness", "auto_duck", "chroma_key", "get_transcript",
+    "get_visual_scenes", "transcribe_asset", "search_transcript",
+    "delete_asset", "set_overlay_config", "get_overlay_config", "get_state",
+    "auto_cut", "analyze_transcript", "find_viral_moments",
+    "upload_short_to_library", "get_full_transcript", "analyze_audio_energy",
+    "classify_audio", "score_content", "segment_topics", "verify_playback",
+    "set_clip_crop", "set_clip_blend_mode", "remove_clip_effect",
+    "set_clip_overlay_presentation", "apply_pip_preset", "solo_track",
+    "rename_track", "reorder_track", "link_clips", "batch", "undo", "redo",
+    "play_pause", "seek", "toggle_loop", "get_action_log", "activate_skill",
+    "generate_thumbnail", "generate_carousel", "apply_gate",
+    "apply_compressor", "apply_de_esser", "apply_eq", "apply_limiter",
+    "normalize_audio_to_lufs", "analyze_audio_spectrum",
+    "apply_spectral_noise_reduction", "add_text_overlay", "add_zoom_effect",
+    "apply_speed_ramp", "set_caption_timing", "export_video"
+  ],
+  "registry_defined_but_not_in_allTools": [
+    "detect_episodes"
+  ],
+  "mcp_only_extra_tools": [
+    "import_media", "add_to_timeline", "clear_project", "save_snapshot",
+    "list_snapshots", "restore_snapshot", "test_feature", "fix_av_links",
+    "set_track_audio_effects", "generate_title", "auto_insert_broll",
+    "search_broll", "search_local_broll", "set_zoom", "take_screenshot",
+    "extract_clips", "extract_segment", "make_short", "analyze_for_shorts",
+    "create_short", "detect_episodes", "hook_optimize", "export_for_platform",
+    "list_platforms", "set_export_folder", "get_export_folder",
+    "add_media_folder", "list_media_folders", "get_transcript_with_timing",
+    "delete_transcript_range", "remove_filler_words", "create_project",
+    "open_project", "list_projects", "save_project", "close_project",
+    "delete_project", "rename_project", "generate_short_thumbnail"
+  ],
+  "duplicates_registry_AND_mcp_only": [
+    "verify_playback", "export_video", "get_state", "analyze_audio_energy",
+    "delete_asset", "set_overlay_config", "get_overlay_config",
+    "get_full_transcript", "analyze_transcript", "find_viral_moments",
+    "upload_short_to_library", "classify_audio", "auto_cut", "segment_topics",
+    "score_content", "generate_thumbnail", "generate_carousel",
+    "analyze_audio_spectrum", "apply_spectral_noise_reduction",
+    "set_caption_timing"
+  ],
+  "mcp_fallback_subset": [
+    "import_media", "add_to_timeline", "extract_segment", "make_short",
+    "analyze_for_shorts", "create_short", "export_for_platform",
+    "generate_short_thumbnail"
+  ],
+  "categories": {
+    "timeline_structure": [
+      "add_track", "insert_clip", "move_clip", "delete_clips", "split_clip",
+      "trim_clip", "duplicate_clip", "remove_section", "ripple_delete",
+      "roll_trim", "slip_clip", "ripple_trim", "link_clips", "batch",
+      "add_to_timeline", "clear_project"
+    ],
+    "tracks": [
+      "remove_track", "lock_track", "mute_track", "solo_track", "rename_track",
+      "reorder_track", "set_track_volume", "set_track_audio_effects"
+    ],
+    "clip_properties": [
+      "set_clip_volume", "set_clip_opacity", "set_clip_speed",
+      "set_clip_effect", "set_clip_transition", "set_clip_transform",
+      "set_clip_keyframes", "set_clip_crop", "set_clip_blend_mode",
+      "remove_clip_effect", "set_clip_overlay_presentation",
+      "apply_pip_preset", "rename_clip", "normalize_audio", "remove_silence"
+    ],
+    "audio_fx_and_analysis": [
+      "apply_gate", "apply_compressor", "apply_de_esser", "apply_eq",
+      "apply_limiter", "normalize_audio_to_lufs", "analyze_audio_spectrum",
+      "apply_spectral_noise_reduction", "voice_cleanup", "denoise_audio",
+      "auto_duck", "measure_loudness"
+    ],
+    "visual_fx": [
+      "apply_lut", "chroma_key", "denoise_video", "stabilize_video",
+      "auto_reframe", "apply_person_mask", "track_object", "add_zoom_effect",
+      "add_text_overlay", "apply_speed_ramp"
+    ],
+    "captions_and_overlays": [
+      "set_caption_style", "set_caption_timing", "set_overlay_config",
+      "get_overlay_config"
+    ],
+    "transcript_and_content_analysis": [
+      "get_transcript", "get_full_transcript", "get_transcript_with_timing",
+      "transcribe_asset", "search_transcript", "analyze_transcript",
+      "find_viral_moments", "auto_cut", "classify_audio", "score_content",
+      "segment_topics", "detect_episodes", "hook_optimize",
+      "analyze_audio_energy", "delete_transcript_range", "remove_filler_words",
+      "get_visual_scenes"
+    ],
+    "assets_and_projects": [
+      "import_media", "delete_asset", "fix_av_links", "create_project",
+      "open_project", "save_project", "list_projects", "close_project",
+      "delete_project", "rename_project", "save_snapshot", "list_snapshots",
+      "restore_snapshot", "set_export_folder", "get_export_folder",
+      "add_media_folder", "list_media_folders"
+    ],
+    "export_and_distribution": [
+      "export_video", "export_for_platform", "list_platforms",
+      "upload_short_to_library", "generate_thumbnail",
+      "generate_short_thumbnail", "generate_carousel", "make_short",
+      "create_short", "extract_clips", "extract_segment", "analyze_for_shorts",
+      "generate_title", "search_broll", "search_local_broll",
+      "auto_insert_broll", "suggest_broll"
+    ],
+    "app_playback_state": [
+      "undo", "redo", "play_pause", "seek", "toggle_loop", "set_zoom",
+      "take_screenshot", "get_state", "get_action_log", "verify_playback",
+      "test_feature", "activate_skill", "set_marker", "delete_marker",
+      "score_thumbnails", "detect_beats"
+    ]
+  }
+}

@@ -54,6 +54,10 @@ public enum EditorIntent: Sendable {
     case removeTextOverlay(clipID: UUID, overlayID: UUID)
     case applySpeedRamp(clipID: UUID, startTime: TimeInterval, endTime: TimeInterval, speedStart: Double, speedEnd: Double, easing: KeyframeInterpolation)
     case addZoomEffect(clipID: UUID, startTime: TimeInterval, duration: TimeInterval, zoomStart: Double, zoomEnd: Double, centerX: Double, centerY: Double)
+    /// Remove a timeline range (split boundaries, delete interior, ripple, prune fragments, shift overlay topics).
+    case removeSection(startTime: TimeInterval, endTime: TimeInterval)
+    /// Delete clips and ripple-close gaps (linked clips expanded; overlay timestamps shifted).
+    case rippleDeleteClips(clipIDs: [UUID])
     /// Multiple intents as a single undoable operation.
     case batch([EditorIntent])
 }
@@ -161,6 +165,10 @@ public struct IntentResolver: Sendable {
             return ApplySpeedRampCommand(clipID: clipID, startTime: startTime, endTime: endTime, speedStart: speedStart, speedEnd: speedEnd, easing: easing)
         case .addZoomEffect(let clipID, let startTime, let duration, let zoomStart, let zoomEnd, let centerX, let centerY):
             return AddZoomEffectCommand(clipID: clipID, startTime: startTime, duration: duration, zoomStart: zoomStart, zoomEnd: zoomEnd, centerX: centerX, centerY: centerY)
+        case .removeSection(let startTime, let endTime):
+            return RemoveSectionCommand(startTime: startTime, endTime: endTime)
+        case .rippleDeleteClips(let clipIDs):
+            return RippleDeleteClipsCommand(clipIDs: clipIDs)
         case .batch(let intents):
             let commands = try intents.map { try resolve($0) }
             return BatchCommand(name: "Batch", commands: commands)

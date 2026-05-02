@@ -1,5 +1,7 @@
 # Skill Tools Implementation Plan
 
+> **Status: SHIPPED — 2026-04-14.** All 15 tools implemented, registered, and covered by passing tests (49 skill-tool tests in 5 suites, 225/225 total in EditorCore). Vignette is exposed via the generic `set_clip_effect` tool rather than a dedicated `apply_vignette` tool. Checkboxes below were ticked retroactively to reflect shipped state.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build 15 missing tools that the updated AI editing skills reference but don't exist yet.
@@ -37,7 +39,7 @@
 
 The Track model already references `audioEffectChain: AudioEffectChain?` but the type was never defined. We also need it on Clip for per-clip audio processing.
 
-- [ ] **Step 1: Write model test**
+- [x] **Step 1: Write model test**
 
 ```swift
 import Testing
@@ -89,12 +91,12 @@ struct AudioEffectChainTests {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd VideoEditor/Packages/EditorCore && swift test --filter AudioEffectChainTests 2>&1 | tail -5`
 Expected: FAIL — types not defined
 
-- [ ] **Step 3: Write AudioEffectChain model**
+- [x] **Step 3: Write AudioEffectChain model**
 
 ```swift
 // AudioEffectChain.swift
@@ -208,21 +210,21 @@ public struct LimiterConfig: Codable, Sendable, Equatable {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd VideoEditor/Packages/EditorCore && swift test --filter AudioEffectChainTests 2>&1 | tail -5`
 Expected: PASS
 
-- [ ] **Step 5: Add `audioEffects` property to Clip**
+- [x] **Step 5: Add `audioEffects` property to Clip**
 
 In `Clip.swift`, add `public var audioEffects: AudioEffectChain?` after the `effects` property (line 14). Add it to init with default `nil`. The Track model already has `audioEffectChain: AudioEffectChain?` on line 31 — it will now compile.
 
-- [ ] **Step 6: Run full EditorCore tests**
+- [x] **Step 6: Run full EditorCore tests**
 
 Run: `cd VideoEditor/Packages/EditorCore && swift test 2>&1 | tail -10`
 Expected: PASS — existing tests still work, new tests pass
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add VideoEditor/Packages/EditorCore/Sources/EditorCore/Models/AudioEffectChain.swift \
@@ -240,7 +242,7 @@ git commit -m "feat(model): add AudioEffectChain model for audio processing pipe
 - Modify: `VideoEditor/Packages/EditorCore/Sources/EditorCore/Models/Clip.swift`
 - Test: `VideoEditor/Packages/EditorCore/Tests/EditorCoreTests/TextOverlayTests.swift`
 
-- [ ] **Step 1: Write model test**
+- [x] **Step 1: Write model test**
 
 ```swift
 import Testing
@@ -269,12 +271,12 @@ struct TextOverlayTests {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd VideoEditor/Packages/EditorCore && swift test --filter TextOverlayTests 2>&1 | tail -5`
 Expected: FAIL
 
-- [ ] **Step 3: Write TextOverlay model**
+- [x] **Step 3: Write TextOverlay model**
 
 ```swift
 import Foundation
@@ -327,16 +329,16 @@ public enum TextAnimation: String, Codable, Sendable, Equatable {
 }
 ```
 
-- [ ] **Step 4: Add `textOverlays` to Clip**
+- [x] **Step 4: Add `textOverlays` to Clip**
 
 In `Clip.swift`, add `public var textOverlays: [TextOverlay]` after `effects`. Add to init with default `[]`.
 
-- [ ] **Step 5: Run tests to verify pass**
+- [x] **Step 5: Run tests to verify pass**
 
 Run: `cd VideoEditor/Packages/EditorCore && swift test --filter TextOverlayTests 2>&1 | tail -5`
 Expected: PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add VideoEditor/Packages/EditorCore/Sources/EditorCore/Models/TextOverlay.swift \
@@ -354,7 +356,7 @@ git commit -m "feat(model): add TextOverlay model for arbitrary text graphics"
 - Modify: `VideoEditor/Packages/EditorCore/Sources/EditorCore/Playback/EffectCompositor.swift` — add rendering
 - Test: `VideoEditor/Packages/EditorCore/Tests/EditorCoreTests/VignetteEffectTests.swift`
 
-- [ ] **Step 1: Write test**
+- [x] **Step 1: Write test**
 
 ```swift
 import Testing
@@ -372,11 +374,11 @@ struct VignetteEffectTests {
 }
 ```
 
-- [ ] **Step 2: Run test — should fail**
+- [x] **Step 2: Run test — should fail**
 
 Run: `cd VideoEditor/Packages/EditorCore && swift test --filter VignetteEffectTests 2>&1 | tail -5`
 
-- [ ] **Step 3: Add vignette to EffectInstance**
+- [x] **Step 3: Add vignette to EffectInstance**
 
 In `Clip.swift`, add to the EffectInstance extension:
 
@@ -394,7 +396,7 @@ public static func vignette(intensity: Double = 0.5, feather: Double = 0.7) -> E
 }
 ```
 
-- [ ] **Step 4: Add vignette rendering in EffectCompositor**
+- [x] **Step 4: Add vignette rendering in EffectCompositor**
 
 In `EffectCompositor.swift`, in the `applyEffect(_:to:)` switch statement, add a case before `default`:
 
@@ -409,12 +411,12 @@ case EffectInstance.typeVignette:
     return vignetteFilter.outputImage ?? image
 ```
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run: `cd VideoEditor/Packages/EditorCore && swift test --filter VignetteEffectTests 2>&1 | tail -5`
 Expected: PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add VideoEditor/Packages/EditorCore/Sources/EditorCore/Models/Clip.swift \
@@ -434,7 +436,7 @@ git commit -m "feat(effects): add vignette visual effect type"
 
 These commands set individual audio processing components on a clip's AudioEffectChain. Each command sets one component (gate, compressor, etc.) and supports undo.
 
-- [ ] **Step 1: Write tests**
+- [x] **Step 1: Write tests**
 
 ```swift
 import Testing
@@ -532,11 +534,11 @@ struct AudioEffectCommandTests {
 }
 ```
 
-- [ ] **Step 2: Run tests — should fail**
+- [x] **Step 2: Run tests — should fail**
 
 Run: `cd VideoEditor/Packages/EditorCore && swift test --filter AudioEffectCommandTests 2>&1 | tail -5`
 
-- [ ] **Step 3: Add EditorIntent cases**
+- [x] **Step 3: Add EditorIntent cases**
 
 In `EditorIntent.swift`, add before the `batch` case:
 
@@ -566,7 +568,7 @@ case .normalizeLUFS(let clipID, let targetLUFS):
     return NormalizeLUFSCommand(clipID: clipID, targetLUFS: targetLUFS)
 ```
 
-- [ ] **Step 4: Write command implementations**
+- [x] **Step 4: Write command implementations**
 
 Create `AudioEffectCommands.swift`:
 
@@ -792,12 +794,12 @@ public struct NormalizeLUFSCommand: Command {
 }
 ```
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run: `cd VideoEditor/Packages/EditorCore && swift test --filter AudioEffectCommandTests 2>&1 | tail -10`
 Expected: PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add VideoEditor/Packages/EditorCore/Sources/EditorCore/Commands/AudioEffectCommands.swift \
@@ -815,7 +817,7 @@ git commit -m "feat(commands): add audio processing chain commands (gate, compre
 - Modify: `VideoEditor/Packages/EditorCore/Sources/EditorCore/Commands/PropertyCommands.swift`
 - Test: `VideoEditor/Packages/EditorCore/Tests/EditorCoreTests/NewToolCommandTests.swift`
 
-- [ ] **Step 1: Write tests**
+- [x] **Step 1: Write tests**
 
 ```swift
 import Testing
@@ -897,11 +899,11 @@ struct NewToolCommandTests {
 }
 ```
 
-- [ ] **Step 2: Run tests — should fail**
+- [x] **Step 2: Run tests — should fail**
 
 Run: `cd VideoEditor/Packages/EditorCore && swift test --filter NewToolCommandTests 2>&1 | tail -5`
 
-- [ ] **Step 3: Update SetMarkerCommand to accept color**
+- [x] **Step 3: Update SetMarkerCommand to accept color**
 
 In the existing `SetMarkerCommand` (find it via grep — it creates `Marker(time:label:)`), add a `color` parameter:
 
@@ -933,7 +935,7 @@ public struct SetMarkerCommand: Command {
 }
 ```
 
-- [ ] **Step 4: Add EditorIntent cases**
+- [x] **Step 4: Add EditorIntent cases**
 
 ```swift
 case addTextOverlay(clipID: UUID, overlay: TextOverlay)
@@ -961,7 +963,7 @@ case .addZoomEffect(let clipID, let startTime, let duration, let zoomStart, let 
     return AddZoomEffectCommand(clipID: clipID, startTime: startTime, duration: duration, zoomStart: zoomStart, zoomEnd: zoomEnd, centerX: centerX, centerY: centerY)
 ```
 
-- [ ] **Step 5: Write command implementations**
+- [x] **Step 5: Write command implementations**
 
 Add to `PropertyCommands.swift`:
 
@@ -1119,17 +1121,17 @@ public struct AddZoomEffectCommand: Command {
 }
 ```
 
-- [ ] **Step 6: Run tests**
+- [x] **Step 6: Run tests**
 
 Run: `cd VideoEditor/Packages/EditorCore && swift test --filter NewToolCommandTests 2>&1 | tail -10`
 Expected: PASS
 
-- [ ] **Step 7: Run all EditorCore tests**
+- [x] **Step 7: Run all EditorCore tests**
 
 Run: `cd VideoEditor/Packages/EditorCore && swift test 2>&1 | tail -10`
 Expected: PASS — no regressions
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add VideoEditor/Packages/EditorCore/Sources/EditorCore/Commands/PropertyCommands.swift \
@@ -1147,7 +1149,7 @@ git commit -m "feat(commands): add text overlay, speed ramp, zoom effect, marker
 
 This task adds all 15 tool definitions and their resolver cases. No tests needed here — the tool definitions are static data and the resolver is tested through integration.
 
-- [ ] **Step 1: Add tool definitions**
+- [x] **Step 1: Add tool definitions**
 
 Add these static properties to `AIToolRegistry` (after existing definitions, before `allTools`):
 
@@ -1314,7 +1316,7 @@ public static let exportVideo = AIToolDefinition(
 )
 ```
 
-- [ ] **Step 2: Add all new tools to the `allTools` array**
+- [x] **Step 2: Add all new tools to the `allTools` array**
 
 Find the `allTools` array and append:
 
@@ -1324,7 +1326,7 @@ normalizeAudioToLUFS, analyzeAudioSpectrum, applySpectralNoiseReduction,
 addTextOverlay, addZoomEffect, setCaptionTiming, applySpeedRamp, exportVideo,
 ```
 
-- [ ] **Step 3: Add resolver cases**
+- [x] **Step 3: Add resolver cases**
 
 Add to the `resolve(toolName:arguments:assets:)` switch:
 
@@ -1474,7 +1476,7 @@ case "set_caption_timing":
     // TODO: This needs a dedicated intent once SubtitleRenderer supports word-level mode
 ```
 
-- [ ] **Step 4: Update set_marker resolver to pass color**
+- [x] **Step 4: Update set_marker resolver to pass color**
 
 Find the existing `"set_marker"` case and update:
 
@@ -1502,7 +1504,7 @@ public static let setMarker = AIToolDefinition(
 )
 ```
 
-- [ ] **Step 5: Extend set_clip_effect resolver for vignette**
+- [x] **Step 5: Extend set_clip_effect resolver for vignette**
 
 In the existing `"set_clip_effect"` resolver case, add a `"vignette"` branch:
 
@@ -1516,7 +1518,7 @@ case "vignette":
 
 Also update the `setClipEffect` tool definition description to mention vignette and add intensity/feather parameters.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add VideoEditor/Packages/AIServices/Sources/AIServices/Tools/AIToolRegistry.swift
@@ -1532,7 +1534,7 @@ git commit -m "feat(tools): register 15 new MCP tools (audio processing, text ov
 
 These two tools need MCP-level handling because they interact with async operations (export) or return analysis data (spectrum) rather than modifying timeline state.
 
-- [ ] **Step 1: Add export_video handler**
+- [x] **Step 1: Add export_video handler**
 
 Near the existing `export_for_platform` handler in MCPServer.swift, add:
 
@@ -1581,11 +1583,11 @@ private func handleExportVideo(_ arguments: [String: Any], appState: AppState) a
 }
 ```
 
-- [ ] **Step 2: Add export_video to MCP tools/list**
+- [x] **Step 2: Add export_video to MCP tools/list**
 
 In the tools list section of MCPServer, add the export_video tool schema (following the same pattern as export_for_platform).
 
-- [ ] **Step 3: Add analyze_audio_spectrum as analysis tool**
+- [x] **Step 3: Add analyze_audio_spectrum as analysis tool**
 
 In the `handleAnalysisTool` method, add:
 
@@ -1599,7 +1601,7 @@ case "analyze_audio_spectrum":
 
 Add `"analyze_audio_spectrum"` and `"apply_spectral_noise_reduction"` to the `analysisTools` set.
 
-- [ ] **Step 4: Add set_caption_timing as analysis tool**
+- [x] **Step 4: Add set_caption_timing as analysis tool**
 
 ```swift
 case "set_caption_timing":
@@ -1612,7 +1614,7 @@ case "set_caption_timing":
     }
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add VideoEditor/VideoEditor/App/MCPServer.swift
@@ -1625,29 +1627,29 @@ git commit -m "feat(mcp): add export_video, analyze_audio_spectrum, set_caption_
 
 **Files:** None — verification only.
 
-- [ ] **Step 1: Run EditorCore tests**
+- [x] **Step 1: Run EditorCore tests**
 
 Run: `cd VideoEditor/Packages/EditorCore && swift test 2>&1 | tail -20`
 Expected: All tests pass
 
-- [ ] **Step 2: Generate Xcode project and build**
+- [x] **Step 2: Generate Xcode project and build**
 
 Run: `cd VideoEditor && xcodegen generate && xcodebuild -scheme VideoEditor -destination 'platform=macOS' build 2>&1 | tail -20`
 Expected: BUILD SUCCEEDED
 
-- [ ] **Step 3: Run full test suite**
+- [x] **Step 3: Run full test suite**
 
 Run: `cd VideoEditor && xcodebuild -scheme VideoEditor -destination 'platform=macOS' test 2>&1 | tail -20`
 Expected: All tests pass
 
-- [ ] **Step 4: Fix any compilation errors**
+- [x] **Step 4: Fix any compilation errors**
 
 If build fails, fix issues and re-run. Common issues:
 - Missing imports (EditorCore types need to be imported in AIServices)
 - Mismatched parameter names between Intent and Command
 - Missing Sendable conformance
 
-- [ ] **Step 5: Final commit**
+- [x] **Step 5: Final commit**
 
 ```bash
 git add -A
