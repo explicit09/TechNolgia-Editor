@@ -21,7 +21,7 @@ public struct CompositionBuilder {
         case export   // always use sourceURL
     }
 
-    public struct Result {
+    public struct Result: @unchecked Sendable {
         public let composition: AVMutableComposition
         public let audioMix: AVAudioMix?
         public let videoComposition: AVVideoComposition?

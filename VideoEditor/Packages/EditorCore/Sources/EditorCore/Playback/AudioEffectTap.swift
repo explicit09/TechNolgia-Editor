@@ -27,6 +27,11 @@ public enum AudioEffectTap {
             process: tapProcess
         )
 
+        // macOS 26 SDK imports the out-parameter as MTAudioProcessingTap?;
+        // earlier SDKs (Xcode 16.x / macOS 15.x) import it as
+        // Unmanaged<MTAudioProcessingTap>?. Branch on compiler version so
+        // we build cleanly on both.
+        #if compiler(>=6.2)
         var tap: MTAudioProcessingTap?
         let status = MTAudioProcessingTapCreate(
             kCFAllocatorDefault,
@@ -41,6 +46,22 @@ public enum AudioEffectTap {
         }
 
         return unwrapped
+        #else
+        var tap: Unmanaged<MTAudioProcessingTap>?
+        let status = MTAudioProcessingTapCreate(
+            kCFAllocatorDefault,
+            &callbacks,
+            kMTAudioProcessingTapCreationFlag_PostEffects,
+            &tap
+        )
+
+        guard status == noErr, let unwrapped = tap else {
+            Unmanaged<TapContext>.fromOpaque(contextPtr).release()
+            return nil
+        }
+
+        return unwrapped.takeRetainedValue()
+        #endif
     }
 
     private static func hasActiveEffects(_ chain: AudioEffectChain) -> Bool {
