@@ -50,7 +50,7 @@ jobs:
 
       - name: Install Python dependencies
         working-directory: VideoEditor/Tools
-        run: python3 -m pip install -r requirements.txt
+        run: python3 -m pip install --break-system-packages -r requirements.txt
 
       - name: Python tests
         working-directory: VideoEditor/Tools
