@@ -1,5 +1,5 @@
 import Foundation
-import AVFoundation
+@preconcurrency import AVFoundation
 
 /// Generates editing proxies for media assets.
 /// Proxies are lower-res, intraframe-friendly transcodes for responsive scrubbing.
