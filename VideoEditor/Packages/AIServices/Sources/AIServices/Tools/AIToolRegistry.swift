@@ -210,12 +210,12 @@ public struct AIToolRegistry: Sendable {
 
     public static let findViralMoments = AIToolDefinition(
         name: "find_viral_moments",
-        description: "Find the best 15-60 second viral clip moments in a transcribed podcast or interview. Sends the full diarized transcript to Claude which identifies contrarian claims, surprising stats, emotional peaks, quotable one-liners, and self-contained moments. Returns a ranked list with exact word-level timestamps. Requires a transcript with speaker diarization.",
+        description: "Find the best viral clip moments in a transcribed podcast or interview (typical span 15–180s per moment). Sends the full diarized transcript to Claude which identifies contrarian claims, surprising stats, emotional peaks, quotable one-liners, and self-contained moments. Returns a ranked list with exact word-level timestamps. Requires a transcript with speaker diarization.",
         parameters: .object([
             "asset_id": .init(type: "string", description: "UUID of the asset to analyze"),
-            "max_moments": .init(type: "number", description: "Maximum number of viral moments to return (default: 10)"),
+            "max_moments": .init(type: "number", description: "Maximum number of viral moments to return (default: 40)"),
             "min_duration_seconds": .init(type: "number", description: "Minimum clip duration in seconds (default: 15)"),
-            "max_duration_seconds": .init(type: "number", description: "Maximum clip duration in seconds (default: 60)"),
+            "max_duration_seconds": .init(type: "number", description: "Maximum clip duration in seconds (default: 180). YouTube Shorts caps at 59s, Reels at 90s — filter downstream by platform."),
         ], required: ["asset_id"])
     )
 
@@ -239,7 +239,7 @@ public struct AIToolRegistry: Sendable {
 
     public static let getFullTranscript = AIToolDefinition(
         name: "get_full_transcript",
-        description: "Get the complete transcript with timestamps at each sentence. Use to READ and understand the content before editing.",
+        description: "Get the complete transcript with [MM:SS] timestamps at natural breaks: end of sentences, or pauses longer than ~0.8s (not fixed-interval chunks). Use to READ and understand the content before editing.",
         parameters: .object([
             "asset_id": .init(type: "string", description: "UUID of the asset"),
             "start": .init(type: "number", description: "Start time in seconds (optional)"),
@@ -375,10 +375,10 @@ public struct AIToolRegistry: Sendable {
 
     public static let removeSilence = AIToolDefinition(
         name: "remove_silence",
-        description: "Remove silent segments from clips based on detected silence ranges",
+        description: "Remove silent segments using precomputed silence ranges on assets (run analysis/transcription that populates silence data). Rebuilds affected clips on the timeline. Cannot be nested inside batch — call as a standalone tool.",
         parameters: .object([
-            "clip_ids": .init(type: "array", description: "Clip UUIDs to remove silence from (empty = all clips)", items: .init(type: "string")),
-            "threshold_db": .init(type: "number", description: "Silence threshold in dB (default: -40)"),
+            "clip_ids": .init(type: "array", description: "Clip UUIDs to process (empty = all timeline clips)", items: .init(type: "string")),
+            "threshold_db": .init(type: "number", description: "Reserved for future use; detection uses stored ranges"),
             "min_duration": .init(type: "number", description: "Minimum silence duration in seconds to remove (default: 0.5)"),
         ], required: [])
     )
@@ -557,10 +557,13 @@ public struct AIToolRegistry: Sendable {
 
     public static let autoReframe = AIToolDefinition(
         name: "auto_reframe",
-        description: "Analyze video and generate crop regions for a target aspect ratio. Tracks faces to keep subjects centered.",
+        description: "Analyze video and generate crop regions for a target aspect ratio (face-aware). When apply is true (default), also sets the first timeline clip’s cropRect for that asset to the average region — disable with apply:false for analysis-only.",
         parameters: .object([
             "asset_id": .init(type: "string", description: "UUID of the asset to analyze"),
             "aspect_ratio": .init(type: "string", description: "Target: 9:16 (vertical), 1:1 (square), 4:5 (portrait), 16:9, 21:9"),
+            "start": .init(type: "number", description: "Optional source start time in seconds for analysis window"),
+            "end": .init(type: "number", description: "Optional source end time in seconds for analysis window"),
+            "apply": .init(type: "boolean", description: "If true (default), apply average crop to the timeline clip for this asset"),
         ], required: ["asset_id", "aspect_ratio"])
     )
 
@@ -816,7 +819,7 @@ public struct AIToolRegistry: Sendable {
 
     public static let batch = AIToolDefinition(
         name: "batch",
-        description: "Execute multiple tool calls as a single undoable operation. Only intent-backed tools are allowed (not undo, redo, play_pause, seek, toggle_loop, get_action_log).",
+        description: "Execute multiple tool calls as a single undoable operation. Only intent-backed tools are allowed. Excluded: undo, redo, play_pause, seek, toggle_loop, get_action_log, remove_silence (host-executed; call it separately).",
         parameters: .object([
             "operations": .init(type: "string", description: "JSON array of {\"tool\": \"tool_name\", \"args\": {...}} objects"),
         ], required: ["operations"])
@@ -1382,6 +1385,23 @@ public struct AIToolResolver: Sendable {
             }
             return [.rippleTrim(clipID: clipID, edge: edge, delta: delta)]
 
+        case "remove_section":
+            guard let start = arguments["start_time"] as? Double,
+                  let end = arguments["end_time"] as? Double else {
+                throw AIToolError.invalidArgument("Missing start_time or end_time")
+            }
+            return [.removeSection(startTime: start, endTime: end)]
+
+        case "ripple_delete":
+            guard let idStrings = arguments["clip_ids"] as? [String] else {
+                throw AIToolError.invalidArgument("Missing clip_ids array")
+            }
+            let ids = idStrings.compactMap { UUID(uuidString: $0) }
+            guard !ids.isEmpty else {
+                throw AIToolError.invalidArgument("No valid clip IDs in clip_ids")
+            }
+            return [.rippleDeleteClips(clipIDs: ids)]
+
         // Analysis tools — handled upstream in AIChatController/MCPServer (need AppState)
         // Return empty intents — the caller handles these before reaching the resolver.
         case "auto_reframe", "detect_beats", "score_thumbnails", "suggest_broll",
@@ -1533,8 +1553,13 @@ public struct AIToolResolver: Sendable {
             guard let trackIDStr = arguments["track_id"] as? String, let trackID = UUID(uuidString: trackIDStr) else {
                 throw AIToolError.invalidArgument("Missing or invalid track_id")
             }
-            guard let newIndex = arguments["new_index"] as? Int else {
-                throw AIToolError.invalidArgument("Missing new_index")
+            let newIndex: Int
+            if let i = arguments["new_index"] as? Int {
+                newIndex = i
+            } else if let d = arguments["new_index"] as? Double {
+                newIndex = Int(d.rounded())
+            } else {
+                throw AIToolError.invalidArgument("Missing new_index (number)")
             }
             return [.reorderTrack(trackID: trackID, newIndex: newIndex)]
 
@@ -1555,7 +1580,10 @@ public struct AIToolResolver: Sendable {
                   let ops = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
                 throw AIToolError.invalidArgument("operations must be a valid JSON array string")
             }
-            let appStateTools: Set<String> = ["undo", "redo", "play_pause", "seek", "toggle_loop", "get_action_log"]
+            let appStateTools: Set<String> = [
+                "undo", "redo", "play_pause", "seek", "toggle_loop", "get_action_log",
+                "remove_silence",
+            ]
             var allIntents: [EditorIntent] = []
             for op in ops {
                 guard let toolName = op["tool"] as? String else {

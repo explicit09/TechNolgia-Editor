@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   build-and-test:
-    runs-on: macos-latest
+    runs-on: macos-26
     timeout-minutes: 30
 
     steps:
@@ -50,7 +50,7 @@ jobs:
 
       - name: Install Python dependencies
         working-directory: VideoEditor/Tools
-        run: python3 -m pip install -r requirements.txt
+        run: python3 -m pip install --break-system-packages -r requirements.txt
 
       - name: Python tests
         working-directory: VideoEditor/Tools

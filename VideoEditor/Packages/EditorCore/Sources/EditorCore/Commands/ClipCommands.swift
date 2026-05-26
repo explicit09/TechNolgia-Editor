@@ -307,4 +307,8 @@ public enum CommandError: Error {
     case clipNotFound(UUID)
     case trackLocked(UUID)
     case splitPointOutOfRange
+    case trackNotEmpty(UUID)
+    case invalidRemoveSectionRange
+    case noClipsInRemoveSectionRange
+    case rippleDeleteEmpty
 }

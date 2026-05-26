@@ -64,11 +64,11 @@ public struct IntentRouter: Sendable {
 
         // Questions / conversation → Sonnet, full tools (model decides whether to use them)
         if matchesAny(lower, keywords: questionKeywords) {
-            return RoutingDecision(tier: .standard, toolSubset: AIToolRegistry.allTools.map(\.name))
+            return RoutingDecision(tier: .standard, toolSubset: allKnownToolNames)
         }
 
         // Default: Sonnet with ALL tools — agent has full access
-        return RoutingDecision(tier: .standard, toolSubset: AIToolRegistry.allTools.map(\.name))
+        return RoutingDecision(tier: .standard, toolSubset: allKnownToolNames)
     }
 
     // MARK: - Keyword sets
@@ -82,6 +82,8 @@ public struct IntentRouter: Sendable {
         "transcript", "says", "said", "mention", "spoken", "talking",
         "silence", "silent", "filler", "um", "uh", "search",
         "find where", "what do i say", "what did i", "transcribe",
+        "short", "shorts", "viral", "hook",
+        "reel", "reels", "tiktok", "youtube shorts", "opus",
     ]
 
     private let complexEditKeywords = [
@@ -119,6 +121,10 @@ public struct IntentRouter: Sendable {
     private let contentTools = [
         "get_transcript", "transcribe_asset", "search_transcript",
         "remove_silence", "remove_section", "split_clip", "delete_clips",
+        "get_full_transcript", "analyze_transcript", "analyze_audio_energy",
+        "find_viral_moments", "extract_segment", "make_short",
+        "analyze_for_shorts", "create_short", "export_for_platform",
+        "generate_short_thumbnail", "upload_short_to_library",
     ]
 
     private let fullEditTools = [
@@ -126,6 +132,8 @@ public struct IntentRouter: Sendable {
         "split_clip", "trim_clip", "remove_section", "ripple_delete",
         "normalize_audio", "set_clip_volume", "set_clip_speed",
         "duplicate_clip", "set_marker",
+        "extract_segment", "make_short", "analyze_for_shorts",
+        "create_short", "export_for_platform", "generate_short_thumbnail",
     ]
 
     private let propertyTools = [
@@ -148,6 +156,17 @@ public struct IntentRouter: Sendable {
         "mute_track", "remove_section", "ripple_delete",
         "get_transcript", "search_transcript",
     ]
+
+    private let mcpOnlyWorkflowTools = [
+        "import_media", "add_to_timeline", "extract_segment", "make_short",
+        "analyze_for_shorts", "create_short", "export_for_platform",
+        "list_platforms", "generate_short_thumbnail",
+    ]
+
+    private var allKnownToolNames: [String] {
+        var seen = Set<String>()
+        return (AIToolRegistry.allTools.map(\.name) + mcpOnlyWorkflowTools).filter { seen.insert($0).inserted }
+    }
 
     private func matchesAny(_ text: String, keywords: [String]) -> Bool {
         keywords.contains { text.contains($0) }

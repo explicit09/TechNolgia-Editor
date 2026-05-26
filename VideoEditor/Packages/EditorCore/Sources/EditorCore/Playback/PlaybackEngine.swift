@@ -132,9 +132,11 @@ public final class PlaybackEngine {
             object: player.currentItem,
             queue: .main
         ) { [weak self] _ in
-            guard let self, self.loopEnabled else { return }
-            self.seek(to: 0)
-            self.player.rate = self.playbackRate
+            MainActor.assumeIsolated {
+                guard let self, self.loopEnabled else { return }
+                self.seek(to: 0)
+                self.player.rate = self.playbackRate
+            }
         }
     }
 
@@ -143,8 +145,10 @@ public final class PlaybackEngine {
     private func setupTimeObserver() {
         let interval = CMTime(seconds: 1.0 / 30.0, preferredTimescale: 600)
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
-            guard let self, self.isPlaying else { return }
-            self.currentTime = time.seconds
+            MainActor.assumeIsolated {
+                guard let self, self.isPlaying else { return }
+                self.currentTime = time.seconds
+            }
         }
     }
 }
