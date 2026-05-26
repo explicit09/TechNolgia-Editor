@@ -1,5 +1,5 @@
 import Foundation
-import AVFoundation
+@preconcurrency import AVFoundation
 
 /// Exports timeline to video file using AVAssetExportSession.
 /// Phase 1 uses high-level export. Phase 2 will add AVAssetReader/Writer for frame-level control.
