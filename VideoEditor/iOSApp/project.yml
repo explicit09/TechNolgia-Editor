@@ -63,14 +63,31 @@ targets:
         CODE_SIGN_STYLE: Automatic
         MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: "3"
+  ShortsDistributionTests:
+    type: bundle.unit-test
+    supportedDestinations: [iOS Simulator]
+    sources:
+      - path: Tests
+    dependencies:
+      - target: ShortsDistribution
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.videoeditor.shorts.tests
+        SWIFT_VERSION: 5.9
+        DEVELOPMENT_TEAM: 5986DKD528
 
 schemes:
   ShortsDistribution:
     build:
       targets:
         ShortsDistribution: all
+        ShortsDistributionTests: [test]
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - ShortsDistributionTests
     profile:
       config: Release
     analyze:

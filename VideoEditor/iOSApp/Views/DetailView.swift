@@ -71,6 +71,8 @@ struct DetailView: View {
 
             metricsRow
 
+            gradeSignalRow
+
             Text(short.reasoning)
                 .font(.footnote)
                 .foregroundStyle(.white.opacity(0.75))
@@ -78,8 +80,47 @@ struct DetailView: View {
         }
     }
 
+    @ViewBuilder
+    private var gradeSignalRow: some View {
+        let warnings = short.scoreWarningLabels
+        let platforms = short.bestPlatformLabels
+        if !warnings.isEmpty || !platforms.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                if !warnings.isEmpty {
+                    chipRow(icon: "exclamationmark.triangle.fill", values: warnings)
+                }
+                if !platforms.isEmpty {
+                    chipRow(icon: "paperplane.fill", values: platforms)
+                }
+            }
+        }
+    }
+
+    private func chipRow(icon: String, values: [String]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.7))
+                ForEach(values, id: \.self) { value in
+                    Text(value)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.88))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(.white.opacity(0.09), in: Capsule())
+                }
+            }
+        }
+    }
+
     private var metricsRow: some View {
         HStack(spacing: 10) {
+            metricPill(
+                icon: "target",
+                label: short.postingPriorityLabel,
+                value: "\(short.distributionScore)/100"
+            )
             metricPill(
                 icon: "leaf.fill",
                 label: "Evergreen",

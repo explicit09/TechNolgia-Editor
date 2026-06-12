@@ -74,6 +74,10 @@ struct LibraryView: View {
                 title: "Total",
                 value: totalDurationLabel
             )
+            MetricPill(
+                title: "Top",
+                value: topScoreLabel
+            )
             if appState.isLoading {
                 MetricPill(title: "Syncing", value: "…")
             }
@@ -87,6 +91,13 @@ struct LibraryView: View {
         let m = total / 60
         let s = total % 60
         return s == 0 ? "\(m)m" : "\(m)m \(s)s"
+    }
+
+    private var topScoreLabel: String {
+        guard let score = appState.liveShorts.map(\.distributionScore).max() else {
+            return "—"
+        }
+        return "\(score)"
     }
 
     @ViewBuilder
@@ -210,6 +221,10 @@ private struct LiveShortCard: View {
                     EmptyView()
                 }
             }
+            .overlay(alignment: .topTrailing) {
+                ScoreBadge(short: short)
+                    .padding(8)
+            }
 
             Text(short.label)
                 .font(.headline.weight(.bold))
@@ -219,6 +234,10 @@ private struct LiveShortCard: View {
                 .font(.subheadline)
                 .foregroundStyle(.white.opacity(0.78))
                 .lineLimit(1)
+            HStack(spacing: 8) {
+                CompactScorePill(title: "Fit", value: short.distributionScoreLabel)
+                CompactScorePill(title: short.postingPriorityLabel, value: short.scoreSummaryLabel)
+            }
             Text(Self.durationLabel(short.duration))
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.white.opacity(0.68))
@@ -233,6 +252,58 @@ private struct LiveShortCard: View {
         let m = s / 60
         let r = s % 60
         return m > 0 ? "\(m):\(String(format: "%02d", r))" : "\(r)s"
+    }
+}
+
+private struct ScoreBadge: View {
+    let short: Short
+
+    var body: some View {
+        VStack(spacing: 1) {
+            Text(short.distributionScoreLabel)
+                .font(.headline.weight(.black))
+                .monospacedDigit()
+            Text(short.postingPriorityLabel)
+                .font(.caption2.weight(.bold))
+        }
+        .foregroundStyle(.black)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .background(scoreColor, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .accessibilityLabel("Distribution score \(short.distributionScore), \(short.postingPriorityLabel)")
+    }
+
+    private var scoreColor: Color {
+        switch short.distributionScore {
+        case 85...:
+            return Color(red: 201 / 255, green: 160 / 255, blue: 40 / 255)
+        case 65..<85:
+            return Color(red: 119 / 255, green: 205 / 255, blue: 170 / 255)
+        default:
+            return Color.white.opacity(0.82)
+        }
+    }
+}
+
+private struct CompactScorePill: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.62))
+            Text(value)
+                .font(.caption2.weight(.bold))
+                .monospacedDigit()
+                .foregroundStyle(.white)
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.75)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(.white.opacity(0.08), in: Capsule())
     }
 }
 
