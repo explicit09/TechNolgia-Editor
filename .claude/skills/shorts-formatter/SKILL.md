@@ -1,7 +1,7 @@
 ---
 name: shorts-formatter
 description: Format clips for vertical short-form platforms (YouTube Shorts, TikTok, Reels). Handles reframing, cold-open hooks, captions, pacing optimization. Verifies output meets platform specs. Use when the user asks about shorts, vertical video, 9:16 reframe, format for TikTok, Reels, YouTube Shorts, portrait mode, vertical video, captions, or subtitles.
-allowed-tools: analyze_audio_energy get_transcript get_transcript_with_timing transcribe_asset extract_segment split_clip trim_clip move_clip add_to_timeline set_clip_speed set_clip_effect set_clip_transform set_clip_transition set_caption_style analyze_for_shorts create_short auto_reframe measure_loudness verify_playback get_state export_for_platform clear_project set_overlay_config
+allowed-tools: analyze_audio_energy get_transcript get_transcript_with_timing transcribe_asset check_trend_context find_broll_opportunities generate_broll_asset start_broll_video_job poll_broll_video_job search_local_broll search_broll import_media insert_broll extract_segment split_clip trim_clip move_clip add_to_timeline set_clip_speed set_clip_effect set_clip_transform set_clip_transition set_caption_style analyze_for_shorts create_short auto_reframe measure_loudness verify_playback get_state export_for_platform clear_project set_overlay_config
 ---
 
 # Shorts Formatter
@@ -25,6 +25,7 @@ Before any formatting work:
 1. `analyze_audio_energy` on the clip's source range
 2. If engagement score < 40 or speech ratio < 50%, WARN the user: "This segment has low audio energy — it may not perform well as a Short"
 3. Only proceed with high-energy content
+4. For timely clips, call `check_trend_context` with concrete topic/person/product queries and use returned signals to sharpen the hook, caption emphasis, and posting angle. Trend fit is a boost only; never format a low-energy or unclear segment just because it matches a trend.
 
 ## Step 1: Reframe for vertical — pick the right tool based on speaker count
 
@@ -46,15 +47,16 @@ Do NOT call `set_overlay_config enabled=false`. `create_short` automatically swi
 ```
 1. analyze_for_shorts asset_id=<id> start=<clip_start_s> end=<clip_end_s>
    → returns: faces detected, speaker-to-face mapping, layout segments
-2. create_short asset_id=<id> layout=<split|fill_0|fill_1>
-   → recomposes to 1080x1920 with proper face tracking
+2. create_short asset_id=<id> layout=auto
+   → recomposes to 1080x1920 with analyzed dynamic face tracking
 ```
 
 **Picking the layout:**
 - `split` — both speakers stacked vertically. Use when BOTH speakers are actively talking / reacting / visible within the clip window.
 - `fill_0` — fill the frame with speaker 0 only. Use when only speaker 0 talks throughout the clip.
 - `fill_1` — fill the frame with speaker 1 only.
-- **Dynamic switching:** `analyze_for_shorts` auto-detects monologue vs dialogue. If one speaker holds ≥80% of the clip, it will recommend fill; otherwise split. Don't override unless it looks wrong in preview.
+- `auto` — preserve the dynamic layout segments from `analyze_for_shorts`; this is the default.
+- **Dynamic switching:** `analyze_for_shorts` auto-detects monologue vs dialogue and may switch between focused speaker fill and split layout over time. Use `auto` unless it looks wrong in preview.
 
 ### 1d. After layout is applied — verify, don't trust
 
@@ -133,7 +135,30 @@ If the opening is weak, apply cold open:
 - `measure_loudness` — target -14 LUFS
 - Verify pacing alignment: Check that visual cuts and transitions sync with audio rhythm. If speech speeds up, cuts should get tighter. If speech slows, allow for more visual breathing room. Misalignment between audio and visual pacing creates cognitive dissonance.
 
-## Step 6: Mandatory verification
+## Step 6: Add B-roll visual polish
+
+Before final verification, add B-roll where the vertical frame would otherwise stay static:
+
+1. Call `find_broll_opportunities` with `platform="shorts"` for the transcribed asset/clip.
+2. For the top 1-3 opportunities, use actual video B-roll: call `start_broll_video_job`, then `poll_broll_video_job` until it returns an imported MP4 `asset_id`.
+3. If OpenRouter credentials are missing, call `search_local_broll` with the opportunity's `search_query`; import a selected local file and call `insert_broll`.
+4. If local search has no match, call `search_broll` with `query=search_query`, `download=true`, `insert_at=timeline_start`, and `duration=1.5-3.0`.
+5. Call `insert_broll` with `placement="overlay"`, `insert_at=timeline_start`, and `duration=1.5-3.0` when the fallback did not already insert the clip.
+6. Use `generate_broll_asset` only as a still visual-support fallback. If you insert a still, pass `allow_still_visual_support=true` and do not describe it as actual video B-roll.
+7. Do not cover the first face/hook frame unless the B-roll itself is the hook. Keep B-roll short and rhythmic.
+
+### B-roll video prompt pattern
+
+When writing or editing a B-roll generation prompt, keep it structured and concrete:
+
+- Start with the video style and intent: "Editorial documentary B-roll video" and what spoken idea it supports.
+- Specify subject, scene, one clear action, camera movement, composition, lighting/tone, format, and duration.
+- For shorts, require portrait-safe framing and no important detail near the bottom brand bar.
+- For 1.5-4s cutaways, ask for a single continuous shot with slow push-in or lateral slide. Avoid multi-scene stories unless the B-roll duration is long enough.
+- Ask for silent video only; the podcast audio stays underneath.
+- Add constraints: no captions, no readable text, no real logos, no famous likeness, unidentifiable people if present.
+
+## Step 7: Mandatory verification
 
 1. `verify_playback` mode "quick":
    - Duration 30-59s (YouTube penalizes 60+)

@@ -276,11 +276,62 @@ final class MCPServer {
                 ],
                 [
                     "name": "auto_insert_broll",
-                    "description": "Automatically find and insert B-roll from the media library at relevant points in the timeline. Analyzes transcript topics and matches them to available assets.",
+                    "description": "ANALYSIS ONLY: prints suggestion text identifying B-roll insertion points and matched assets — does NOT actually insert clips on the timeline. Read the report and call `add_to_timeline` for each suggestion you want, or use `suggest_broll` for a structured list.",
                     "inputSchema": ["type": "object", "properties": [
                         "max_inserts": ["type": "number", "description": "Maximum number of B-roll clips to insert (default: 5)"],
                         "duration": ["type": "number", "description": "Duration of each B-roll insert in seconds (default: 3)"],
                     ], "required": []],
+                ],
+                [
+                    "name": "find_broll_opportunities",
+                    "description": "Find transcript moments that need B-roll during podcast or shorts editing. Returns ranked OpenRouter-ready video-generation prompts plus search queries, timing, category, score, and recommended overlay placement. Use before start_broll_video_job/poll_broll_video_job/insert_broll.",
+                    "inputSchema": ["type": "object", "properties": [
+                        "asset_id": ["type": "string", "description": "Optional transcribed asset UUID. Defaults to the first timeline/transcribed asset."],
+                        "transcript": ["type": "string", "description": "Optional transcript text to analyze directly when no asset transcript is available."],
+                        "platform": ["type": "string", "description": "podcast or shorts. Defaults to shorts."],
+                        "max_results": ["type": "number", "description": "Maximum opportunities to return (default 8)."],
+                    ], "required": []],
+                ],
+                [
+                    "name": "generate_broll_asset",
+                    "description": "Fallback only: generate a still visual-support asset with OpenRouter and import it into the media library. For actual B-roll, prefer start_broll_video_job so the asset is an MP4.",
+                    "inputSchema": ["type": "object", "properties": [
+                        "prompt": ["type": "string", "description": "OpenRouter image prompt, ideally from find_broll_opportunities."],
+                        "aspect_ratio": ["type": "string", "description": "9:16 for shorts or 16:9 for podcasts. Default 9:16."],
+                        "model": ["type": "string", "description": "Optional OpenRouter image model. Defaults to google/gemini-3.1-flash-image-preview."],
+                        "label": ["type": "string", "description": "Optional filename label."],
+                    ], "required": ["prompt"]],
+                ],
+                [
+                    "name": "start_broll_video_job",
+                    "description": "Submit an async OpenRouter text-to-video B-roll generation job. This is the default generated B-roll path for podcasts and shorts. Requires OPENROUTER_API_KEY.",
+                    "inputSchema": ["type": "object", "properties": [
+                        "prompt": ["type": "string", "description": "Video B-roll prompt, ideally from find_broll_opportunities."],
+                        "aspect_ratio": ["type": "string", "description": "9:16 for shorts or 16:9 for podcasts. Default 9:16."],
+                        "duration": ["type": "number", "description": "Video duration in seconds. OpenRouter models commonly support 4, 6, or 8. Default 4."],
+                        "resolution": ["type": "string", "description": "720p or 1080p. Default 720p."],
+                        "model": ["type": "string", "description": "Optional OpenRouter video model. Defaults to google/veo-3.1-lite."],
+                    ], "required": ["prompt"]],
+                ],
+                [
+                    "name": "poll_broll_video_job",
+                    "description": "Poll an OpenRouter B-roll video job. When completed, downloads the MP4, imports it into the media library, and returns an asset_id for insert_broll.",
+                    "inputSchema": ["type": "object", "properties": [
+                        "job_id": ["type": "string", "description": "OpenRouter video job id."],
+                        "polling_url": ["type": "string", "description": "Optional polling_url returned by start_broll_video_job."],
+                        "label": ["type": "string", "description": "Optional imported filename label."],
+                    ], "required": ["job_id"]],
+                ],
+                [
+                    "name": "insert_broll",
+                    "description": "Insert an imported B-roll asset onto the timeline. Defaults to overlay on a B-Roll video track so podcast audio stays intact. Run verify_playback after insertion.",
+                    "inputSchema": ["type": "object", "properties": [
+                        "asset_id": ["type": "string", "description": "UUID of the generated, stock, or local B-roll video asset."],
+                        "insert_at": ["type": "number", "description": "Timeline start in seconds."],
+                        "duration": ["type": "number", "description": "Timeline duration in seconds. Defaults to 2.5."],
+                        "placement": ["type": "string", "description": "overlay or replace. Default overlay."],
+                        "allow_still_visual_support": ["type": "boolean", "description": "If true, permit an image asset as fallback visual support. Default false; actual B-roll should be video."],
+                    ], "required": ["asset_id", "insert_at"]],
                 ],
                 [
                     "name": "search_broll",
@@ -360,10 +411,10 @@ final class MCPServer {
                 ],
                 [
                     "name": "create_short",
-                    "description": "Create a vertical short-form clip from the current timeline. Applies face-tracked Split/Fill layout, recomposes to 9:16 (1080x1920). Must run analyze_for_shorts first to get face tracking data. The video on the timeline will be recomposed with speakers stacked vertically.",
+                    "description": "Create a vertical short-form clip from the current timeline. Applies face-tracked dynamic Split/Fill layout, recomposes to 9:16 (1080x1920), and preserves analyze_for_shorts auto-switching unless a fixed layout is explicitly requested.",
                     "inputSchema": ["type": "object", "properties": [
                         "asset_id": ["type": "string", "description": "UUID of the asset (used for face tracking data)"],
-                        "layout": ["type": "string", "description": "Layout: 'split' (default), 'fill_0' (speaker 0 fills), 'fill_1' (speaker 1 fills)"],
+                        "layout": ["type": "string", "description": "Layout: 'auto' (default, preserves analyzed speaker switching), 'split', 'fill_0' (speaker 0 fills), 'fill_1' (speaker 1 fills)"],
                     ], "required": ["asset_id"]],
                 ],
                 [
@@ -414,6 +465,8 @@ final class MCPServer {
                         "max_moments": ["type": "number", "description": "Maximum number of viral moments to return (default: 40)"],
                         "min_duration_seconds": ["type": "number", "description": "Minimum clip duration in seconds (default: 15)"],
                         "max_duration_seconds": ["type": "number", "description": "Maximum clip duration in seconds (default: 180). YouTube Shorts caps at 59s, Reels at 90s, TikTok/LinkedIn go longer. Filter downstream by platform."],
+                        "max_overlap_ratio": ["type": "number", "description": "Optional near-duplicate suppression threshold from 0-1 (default 0.5)."],
+                        "trend_context": ["type": "string", "description": "Optional JSON returned by check_trend_context. Use it as explicit trend evidence when scoring trending_score."],
                     ], "required": ["asset_id"]],
                 ],
                 [
@@ -429,6 +482,12 @@ final class MCPServer {
                         "evergreen_score": ["type": "number"],
                         "trending_score": ["type": "number"],
                         "platform_fit": ["type": "array"],
+                        "distribution_score": ["type": "number", "description": "0-100 pipeline grade score from find_viral_moments"],
+                        "posting_priority": ["type": "string", "description": "post_now, queue, or review"],
+                        "score_warnings": ["type": "array", "description": "Pipeline warning chips such as weak_hook, missing_visual_support, too_short"],
+                        "best_platforms": ["type": "array", "description": "Best-fit destination platforms from the pipeline grade"],
+                        "score_breakdown": ["type": "object", "description": "Numeric scorecard breakdown emitted by find_viral_moments"],
+                        "pipeline_grade": ["type": "object", "description": "Full pipeline grade emitted by find_viral_moments"],
                         "reasoning": ["type": "string"],
                         "source_asset_name": ["type": "string"],
                     ], "required": ["asset_id", "source_start", "source_end", "video_path", "label", "hook"]],
@@ -629,7 +688,7 @@ final class MCPServer {
                 ],
                 [
                     "name": "analyze_audio_spectrum",
-                    "description": "Analyze the frequency spectrum of a clip's audio. Returns peak frequencies and noise floor information. Use the results with apply_spectral_noise_reduction to suppress specific noise frequencies.",
+                    "description": "STUB: returns a canned summary text — no FFT or real spectrum analysis runs. Calling this does NOT produce usable peak-frequency data.",
                     "inputSchema": ["type": "object", "properties": [
                         "clip_id": ["type": "string", "description": "UUID of the clip to analyze"],
                         "start": ["type": "number", "description": "Start time in seconds (optional, defaults to 0)"],
@@ -638,19 +697,19 @@ final class MCPServer {
                 ],
                 [
                     "name": "apply_spectral_noise_reduction",
-                    "description": "Apply spectral noise reduction to a clip by suppressing specific frequencies. Use analyze_audio_spectrum first to identify noise frequencies.",
+                    "description": "STUB: returns a canned line — no audio is filtered. No spectral processing is applied.",
                     "inputSchema": ["type": "object", "properties": [
                         "clip_id": ["type": "string", "description": "UUID of the clip to process"],
-                        "frequencies_hz": ["type": "array", "description": "Frequencies to suppress in Hz (e.g. [60, 120, 240] for hum removal)", "items": ["type": "number"]],
+                        "frequencies_hz": ["type": "array", "description": "Frequencies to suppress in Hz (currently unused)", "items": ["type": "number"]],
                     ], "required": ["clip_id", "frequencies_hz"]],
                 ],
                 [
                     "name": "set_caption_timing",
-                    "description": "Set timing for captions on a clip. Use sync_to_transcript=true for word-level sync from the transcript, or provide manual word_timings.",
+                    "description": "STUB: returns a canned line — no caption timing is set. word_timings is unused. Captions still render based on transcript word timings via `set_caption_style`.",
                     "inputSchema": ["type": "object", "properties": [
                         "clip_id": ["type": "string", "description": "UUID of the clip"],
                         "sync_to_transcript": ["type": "boolean", "description": "If true, sync captions to transcript word timings (default: true)"],
-                        "word_timings": ["type": "array", "description": "Manual word timings: array of {word, start, end} objects", "items": ["type": "object"]],
+                        "word_timings": ["type": "array", "description": "Manual word timings (currently ignored)", "items": ["type": "object"]],
                     ], "required": ["clip_id"]],
                 ],
             ])
@@ -859,7 +918,7 @@ final class MCPServer {
             return "Error: use 'fit' or a number"
         }
         if name == "delete_asset" {
-            return handleDeleteAsset(arguments, appState: appState)
+            return await handleDeleteAsset(arguments, appState: appState)
         }
         if name == "take_screenshot" {
             return await handleTakeScreenshot(appState: appState)
@@ -869,6 +928,21 @@ final class MCPServer {
         }
         if name == "auto_insert_broll" {
             return await handleAutoInsertBroll(arguments, appState: appState)
+        }
+        if name == "find_broll_opportunities" {
+            return await handleFindBRollOpportunities(arguments, appState: appState)
+        }
+        if name == "generate_broll_asset" {
+            return await handleGenerateBRollAsset(arguments, appState: appState)
+        }
+        if name == "start_broll_video_job" {
+            return await handleStartBRollVideoJob(arguments, appState: appState)
+        }
+        if name == "poll_broll_video_job" {
+            return await handlePollBRollVideoJob(arguments, appState: appState)
+        }
+        if name == "insert_broll" {
+            return handleInsertBRoll(arguments, appState: appState)
         }
         if name == "search_broll" {
             return await handleSearchBroll(arguments, appState: appState)
@@ -900,6 +974,11 @@ final class MCPServer {
         if name == "set_overlay_config" {
             return handleSetOverlayConfig(arguments, appState: appState)
         }
+        if name == "activate_skill" {
+            let skillName = (arguments["name"] as? String) ?? ""
+            let (success, message) = appState.aiChat.activateSkill(named: skillName)
+            return success ? message : "Error: \(message)"
+        }
         if name == "get_overlay_config" {
             return handleGetOverlayConfig(appState: appState)
         }
@@ -908,6 +987,9 @@ final class MCPServer {
         }
         if name == "analyze_transcript" {
             return await handleAnalyzeTranscript(arguments, appState: appState)
+        }
+        if name == "check_trend_context" {
+            return await handleCheckTrendContext(arguments, appState: appState)
         }
         if name == "find_viral_moments" {
             return await handleFindViralMoments(arguments, appState: appState)
@@ -981,7 +1063,7 @@ final class MCPServer {
             guard let newName = arguments["name"] as? String, !newName.isEmpty else {
                 return "Error: 'name' is required"
             }
-            return appState.renameProject(to: newName)
+            return await appState.renameProject(to: newName)
         }
 
         if name == "save_snapshot" {
@@ -1011,6 +1093,9 @@ final class MCPServer {
             do {
                 let timeline = try await vc.restoreSnapshot(id: id)
                 appState.context.timelineState.timeline = timeline
+                appState.timelineViewState.clearSelection()
+                appState.rebuildCompositionNow()
+                appState.flushPendingState()
                 return "Restored snapshot. " + stateSnapshot(appState)
             } catch {
                 return "Error: \(error.localizedDescription)"
@@ -1291,7 +1376,7 @@ final class MCPServer {
         return lines.joined(separator: "\n")
     }
 
-    private func handleDeleteAsset(_ args: [String: Any], appState: AppState) -> String {
+    private func handleDeleteAsset(_ args: [String: Any], appState: AppState) async -> String {
         guard let assetIDStr = args["asset_id"] as? String,
               let assetID = UUID(uuidString: assetIDStr) else {
             return "Error: invalid asset_id"
@@ -1308,10 +1393,8 @@ final class MCPServer {
         }
 
         let name = asset.name
-        Task { @MainActor in
-            await appState.media.mediaManager.remove(id: assetID)
-            await appState.media.refreshAssets()
-        }
+        await appState.media.mediaManager.remove(id: assetID)
+        await appState.media.refreshAssets()
         return "Deleted asset '\(name)'. " + stateSnapshot(appState)
     }
 
@@ -1586,6 +1669,361 @@ final class MCPServer {
         }
 
         return report
+    }
+
+    private func handleFindBRollOpportunities(_ args: [String: Any], appState: AppState) async -> String {
+        let platformValue = (args["platform"] as? String ?? "shorts").lowercased()
+        let platform: BRollPlatform = platformValue == "podcast" ? .podcast : .shorts
+        let maxResults = args["max_results"] as? Int
+            ?? (args["max_results"] as? Double).map { Int($0) }
+            ?? 8
+
+        guard let words = await resolveBRollTranscript(args, appState: appState) else {
+            return """
+            {
+              "broll_opportunities": [],
+              "error": "No transcript available. Run transcribe_asset first or pass a transcribed asset_id."
+            }
+            """
+        }
+
+        let planner = BRollOpportunityPlanner()
+        let opportunities = planner.findOpportunities(
+            transcript: words,
+            platform: platform,
+            maxResults: maxResults
+        )
+        guard !opportunities.isEmpty else {
+            return """
+            {
+              "broll_opportunities": [],
+              "note": "No high-confidence B-roll opportunities found. Keep the edit clean or use explicit search_broll/generate_broll_asset prompts."
+            }
+            """
+        }
+
+        let payload: [String: Any] = [
+            "workflow": "generated_broll",
+            "platform": platform.rawValue,
+            "instructions": [
+                "Generate one moving MP4 asset with start_broll_video_job using the selected generation_prompt, aspect_ratio, and rounded duration.",
+                "Poll with poll_broll_video_job until it returns an imported asset_id.",
+                "Insert the video asset with insert_broll at timeline_start for duration seconds.",
+                "Run verify_playback after insertion.",
+            ],
+            "broll_opportunities": opportunities.map { opportunity in
+                [
+                    "id": opportunity.id.uuidString,
+                    "timeline_start": roundToTwoDecimals(opportunity.timelineStart),
+                    "duration": roundToTwoDecimals(opportunity.duration),
+                    "category": opportunity.category.rawValue,
+                    "score": roundToTwoDecimals(opportunity.score),
+                    "subject": opportunity.subject,
+                    "reason": opportunity.reason,
+                    "transcript_excerpt": opportunity.transcriptExcerpt,
+                    "search_query": opportunity.searchQuery,
+                    "generation_prompt": opportunity.prompt,
+                    "fallback_prompt": opportunity.fallbackPrompt,
+                    "placement": opportunity.placement.rawValue,
+                    "aspect_ratio": opportunity.aspectRatio,
+                    "provider": opportunity.provider,
+                    "artifact_kind": opportunity.artifactKind,
+                    "preferred_tool": opportunity.preferredTool,
+                    "fallback_tool": opportunity.fallbackTool,
+                ] as [String: Any]
+            },
+        ]
+        return prettyJSONString(payload)
+    }
+
+    private func handleGenerateBRollAsset(_ args: [String: Any], appState: AppState) async -> String {
+        guard let prompt = args["prompt"] as? String, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return "Error: generate_broll_asset requires a non-empty prompt."
+        }
+        guard let apiKey = ProcessInfo.processInfo.environment["OPENROUTER_API_KEY"] ?? loadEnvKey("OPENROUTER_API_KEY") else {
+            return """
+            {
+              "error": "missing_credentials",
+              "provider": "openrouter",
+              "message": "Set OPENROUTER_API_KEY in environment or .env to generate B-roll assets.",
+              "fallback": "Use search_local_broll or search_broll until OpenRouter is configured."
+            }
+            """
+        }
+
+        let aspectRatio = args["aspect_ratio"] as? String ?? "9:16"
+        let model = args["model"] as? String ?? OpenRouterImageProvider.defaultModel
+        let label = sanitizeFilename(args["label"] as? String ?? "generated-broll")
+        let provider = OpenRouterImageProvider(apiKey: apiKey, model: model)
+        let size: ImageGenSize = aspectRatio == "16:9" ? .thumbnail : .portrait
+
+        do {
+            let imageData = try await provider.generateImage(prompt: prompt, referenceImages: [], size: size)
+            let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+            let brollDir = docsDir.appendingPathComponent("GeneratedBRoll", isDirectory: true)
+            try FileManager.default.createDirectory(at: brollDir, withIntermediateDirectories: true)
+            let filename = "\(label)-\(Int(Date().timeIntervalSince1970)).png"
+            let fileURL = brollDir.appendingPathComponent(filename)
+            try imageData.write(to: fileURL, options: .atomic)
+            let asset = try await appState.importMedia(from: fileURL)
+            return prettyJSONString([
+                "status": "generated",
+                "provider": "openrouter",
+                "model": model,
+                "asset_id": asset.id.uuidString,
+                "asset_name": asset.name,
+                "file_path": fileURL.path,
+                "aspect_ratio": aspectRatio,
+                "next_tool": "insert_broll",
+            ])
+        } catch {
+            return prettyJSONString([
+                "error": "generation_failed",
+                "provider": "openrouter",
+                "message": error.localizedDescription,
+            ])
+        }
+    }
+
+    private func handleStartBRollVideoJob(_ args: [String: Any], appState: AppState) async -> String {
+        _ = appState
+        guard let prompt = args["prompt"] as? String, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return "Error: start_broll_video_job requires a non-empty prompt."
+        }
+        guard let apiKey = ProcessInfo.processInfo.environment["OPENROUTER_API_KEY"] ?? loadEnvKey("OPENROUTER_API_KEY") else {
+            return prettyJSONString([
+                "error": "missing_credentials",
+                "provider": "openrouter",
+                "message": "Set OPENROUTER_API_KEY in environment or .env to generate B-roll video.",
+                "fallback": "Use generate_broll_asset for still B-roll only after credentials are configured, or use local/stock B-roll.",
+            ])
+        }
+
+        let model = args["model"] as? String ?? OpenRouterVideoProvider.defaultModel
+        let aspectRatio = args["aspect_ratio"] as? String ?? "9:16"
+        let resolution = args["resolution"] as? String ?? "720p"
+        let duration = args["duration"] as? Int
+            ?? (args["duration"] as? Double).map { Int($0.rounded()) }
+            ?? 4
+        let provider = OpenRouterVideoProvider(apiKey: apiKey, model: model)
+
+        do {
+            let job = try await provider.submit(
+                prompt: prompt,
+                duration: max(1, duration),
+                resolution: resolution,
+                aspectRatio: aspectRatio
+            )
+            return prettyJSONString([
+                "status": job.status,
+                "provider": "openrouter",
+                "model": model,
+                "job_id": job.id,
+                "polling_url": job.pollingURL.map { $0 as Any } ?? NSNull(),
+                "next_tool": "poll_broll_video_job",
+            ])
+        } catch {
+            return prettyJSONString([
+                "error": "video_job_submit_failed",
+                "provider": "openrouter",
+                "message": error.localizedDescription,
+            ])
+        }
+    }
+
+    private func handlePollBRollVideoJob(_ args: [String: Any], appState: AppState) async -> String {
+        guard let jobID = args["job_id"] as? String, !jobID.isEmpty else {
+            return "Error: poll_broll_video_job requires job_id."
+        }
+        guard let apiKey = ProcessInfo.processInfo.environment["OPENROUTER_API_KEY"] ?? loadEnvKey("OPENROUTER_API_KEY") else {
+            return prettyJSONString([
+                "error": "missing_credentials",
+                "provider": "openrouter",
+                "message": "Set OPENROUTER_API_KEY in environment or .env to poll/download B-roll video.",
+            ])
+        }
+
+        let label = sanitizeFilename(args["label"] as? String ?? "generated-broll-video")
+        let provider = OpenRouterVideoProvider(apiKey: apiKey)
+        let seed = OpenRouterVideoJob(
+            id: jobID,
+            status: "pending",
+            pollingURL: args["polling_url"] as? String
+        )
+
+        do {
+            let job = try await provider.poll(job: seed)
+            guard job.status == "completed" else {
+                return prettyJSONString([
+                    "status": job.status,
+                    "provider": "openrouter",
+                    "job_id": job.id,
+                    "polling_url": job.pollingURL.map { $0 as Any } ?? NSNull(),
+                    "error": job.error.map { $0 as Any } ?? NSNull(),
+                    "next_tool": "poll_broll_video_job",
+                ])
+            }
+
+            let videoData = try await provider.download(job: job)
+            let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+            let brollDir = docsDir.appendingPathComponent("GeneratedBRoll", isDirectory: true)
+            try FileManager.default.createDirectory(at: brollDir, withIntermediateDirectories: true)
+            let fileURL = brollDir.appendingPathComponent("\(label)-\(job.id).mp4")
+            try videoData.write(to: fileURL, options: .atomic)
+            let asset = try await appState.importMedia(from: fileURL)
+            return prettyJSONString([
+                "status": "downloaded",
+                "provider": "openrouter",
+                "job_id": job.id,
+                "asset_id": asset.id.uuidString,
+                "asset_name": asset.name,
+                "file_path": fileURL.path,
+                "next_tool": "insert_broll",
+            ])
+        } catch {
+            return prettyJSONString([
+                "error": "video_job_poll_failed",
+                "provider": "openrouter",
+                "job_id": jobID,
+                "message": error.localizedDescription,
+            ])
+        }
+    }
+
+    private func handleInsertBRoll(_ args: [String: Any], appState: AppState) -> String {
+        guard let assetIDString = args["asset_id"] as? String,
+              let assetID = UUID(uuidString: assetIDString),
+              let asset = appState.assets.first(where: { $0.id == assetID }) else {
+            return "Error: insert_broll requires a valid asset_id."
+        }
+        guard let insertAt = args["insert_at"] as? Double else {
+            return "Error: insert_broll requires insert_at."
+        }
+        let requestedDuration = args["duration"] as? Double ?? 2.5
+        guard requestedDuration.isFinite, requestedDuration > 0 else {
+            return "Error: insert_broll duration must be > 0."
+        }
+        let allowStillVisualSupport = args["allow_still_visual_support"] as? Bool ?? false
+        if asset.type == .image && !allowStillVisualSupport {
+            return prettyJSONString([
+                "error": "image_asset_not_broll",
+                "asset_id": asset.id.uuidString,
+                "asset_name": asset.name,
+                "asset_type": asset.type.rawValue,
+                "message": "insert_broll expects actual video B-roll by default. Use start_broll_video_job/poll_broll_video_job for generated MP4 B-roll, search_local_broll/search_broll for footage, or pass allow_still_visual_support=true only for an intentional still fallback.",
+            ])
+        }
+        let duration = min(max(requestedDuration, 0.5), asset.duration > 0 ? min(asset.duration, 30.0) : 30.0)
+        let placement = (args["placement"] as? String ?? "overlay").lowercased()
+
+        let targetTrackID: UUID
+        if placement == "replace" {
+            guard let mainVideo = appState.timeline.tracks.first(where: { $0.type == .video }) else {
+                return "Error: No video track available for replace B-roll."
+            }
+            targetTrackID = mainVideo.id
+        } else if let existing = appState.timeline.tracks.first(where: { $0.type == .video && $0.name.localizedCaseInsensitiveContains("B-Roll") }) {
+            targetTrackID = existing.id
+        } else {
+            let track = Track(name: "B-Roll", type: .video)
+            do {
+                try appState.perform(.addTrack(track: track), source: .ai)
+                targetTrackID = track.id
+            } catch {
+                return "Error creating B-Roll track: \(error.localizedDescription)"
+            }
+        }
+
+        let clip = Clip(
+            assetID: asset.id,
+            timelineRange: TimeRange(start: insertAt, duration: duration),
+            sourceRange: TimeRange(start: 0, duration: duration),
+            metadata: ClipMetadata(label: "B-roll: \(asset.name)")
+        )
+        do {
+            try appState.perform(.insertClip(clip: clip, trackID: targetTrackID), source: .ai)
+            appState.rebuildCompositionNow()
+            return prettyJSONString([
+                "status": "inserted",
+                "asset_id": asset.id.uuidString,
+                "clip_id": clip.id.uuidString,
+                "placement": placement == "replace" ? "replace" : "overlay",
+                "timeline_start": roundToTwoDecimals(insertAt),
+                "duration": roundToTwoDecimals(duration),
+                "track_id": targetTrackID.uuidString,
+                "next_tool": "verify_playback",
+            ])
+        } catch {
+            return "Error inserting B-roll: \(error.localizedDescription)"
+        }
+    }
+
+    private func resolveBRollTranscript(_ args: [String: Any], appState: AppState) async -> [TranscriptWord]? {
+        if let transcript = args["transcript"] as? String {
+            let tokens = transcript
+                .split(whereSeparator: \.isWhitespace)
+                .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            if !tokens.isEmpty {
+                let secondsPerWord = 0.42
+                return tokens.enumerated().map { index, token in
+                    let start = Double(index) * secondsPerWord
+                    return TranscriptWord(word: token, start: start, end: start + secondsPerWord)
+                }
+            }
+        }
+
+        if let idString = args["asset_id"] as? String,
+           let assetID = UUID(uuidString: idString),
+           let asset = appState.assets.first(where: { $0.id == assetID }) {
+            if let words = asset.analysis?.transcript, !words.isEmpty {
+                return words
+            }
+            if let result = await appState.media.transcriptionService.getTranscript(
+                for: asset,
+                bundleURL: appState.projectBundleURL
+            ) {
+                return result.words
+            }
+        }
+
+        let timelineAssetIDs = appState.timeline.tracks
+            .filter { $0.type == .video }
+            .flatMap(\.clips)
+            .map(\.assetID)
+        for assetID in timelineAssetIDs {
+            guard let asset = appState.assets.first(where: { $0.id == assetID }) else { continue }
+            if let words = asset.analysis?.transcript, !words.isEmpty {
+                return words
+            }
+            if let result = await appState.media.transcriptionService.getTranscript(
+                for: asset,
+                bundleURL: appState.projectBundleURL
+            ) {
+                return result.words
+            }
+        }
+
+        return appState.assets.compactMap { $0.analysis?.transcript }.first { !$0.isEmpty }
+    }
+
+    private func prettyJSONString(_ value: Any) -> String {
+        guard JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]),
+              let string = String(data: data, encoding: .utf8) else {
+            return "\(value)"
+        }
+        return string
+    }
+
+    private func sanitizeFilename(_ value: String) -> String {
+        let cleaned = value
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .prefix(8)
+            .joined(separator: "-")
+        return cleaned.isEmpty ? "generated-broll" : cleaned
     }
 
     // MARK: - Search Local B-roll Library
@@ -2359,7 +2797,12 @@ final class MCPServer {
                   let words = asset.analysis?.transcript else { return "No transcribed assets." }
             let matcher = BRollMatcher()
             let suggestions = matcher.suggest(transcript: words, assets: appState.assets, timeline: appState.timeline)
-            return "\(suggestions.count) B-roll suggestions."
+            guard !suggestions.isEmpty else { return "No B-roll matches found for the current transcript." }
+            let lines = suggestions.enumerated().map { (i, s) -> String in
+                let conf = String(format: "%.2f", s.confidence)
+                return "\(i + 1). \(s.assetName) [id=\(s.assetID.uuidString)] at \(TimeFormatter.duration(s.startTime)) for \(String(format: "%.1f", s.duration))s — \(s.reason) (conf \(conf))"
+            }
+            return "\(suggestions.count) B-roll suggestions:\n" + lines.joined(separator: "\n")
 
         case "measure_loudness":
             guard let assetIDStr = args["asset_id"] as? String, let assetID = UUID(uuidString: assetIDStr),
@@ -3239,9 +3682,12 @@ final class MCPServer {
             config = cached
         }
 
-        // Override layout if specified
-        if let layoutStr = args["layout"] as? String {
+        // Override layout only when a fixed layout is explicitly requested.
+        // Omitted layout and "auto" preserve the dynamic segments from analyze_for_shorts.
+        if let layoutStr = (args["layout"] as? String)?.lowercased() {
             switch layoutStr {
+            case "auto", "dynamic":
+                break
             case "split":
                 config.layoutSegments = [LayoutSegment(startTime: 0, layout: .split)]
             case "fill_0":
@@ -3249,7 +3695,7 @@ final class MCPServer {
             case "fill_1":
                 config.layoutSegments = [LayoutSegment(startTime: 0, layout: .fill(activeSpeaker: 1))]
             default:
-                break // Use analyzed layouts
+                return "Error: Unknown layout '\(layoutStr)'. Use auto, split, fill_0, or fill_1."
             }
         }
 
@@ -3272,12 +3718,12 @@ final class MCPServer {
         }
         appState.rebuildCompositionNow()
 
-        return "Short-form layout applied. Output: \(config.outputAspect.size.width)x\(config.outputAspect.size.height). Layout: \(config.layoutSegments.first?.layout ?? .split). Faces tracked: \(config.faceTracks.count). Brand bar overlay activated."
+        return "Short-form layout applied. Output: \(config.outputAspect.size.width)x\(config.outputAspect.size.height). Layout segments: \(config.layoutSegments.count). First layout: \(config.layoutSegments.first?.layout ?? .split). Faces tracked: \(config.faceTracks.count). Brand bar overlay activated."
     }
 
     // MARK: - Overlay Config
 
-    private func handleSetOverlayConfig(_ args: [String: Any], appState: AppState) -> String {
+    func handleSetOverlayConfig(_ args: [String: Any], appState: AppState) -> String {
         let enabled = args["enabled"] as? Bool ?? true
 
         // Load template if specified, then merge episode-specific args on top
@@ -3541,6 +3987,300 @@ final class MCPServer {
         return results
     }
 
+    private static func extractFirstJSONObject(from text: String, containing key: String? = nil) -> String? {
+        let chars = Array(text)
+        var i = 0
+        while i < chars.count {
+            guard chars[i] == "{" else { i += 1; continue }
+            var depth = 0
+            var inString = false
+            var escape = false
+            var end = -1
+            for j in i..<chars.count {
+                let c = chars[j]
+                if escape { escape = false; continue }
+                if c == "\\" { escape = true; continue }
+                if c == "\"" { inString.toggle(); continue }
+                if inString { continue }
+                if c == "{" { depth += 1 }
+                else if c == "}" {
+                    depth -= 1
+                    if depth == 0 { end = j; break }
+                }
+            }
+            if end > i {
+                let candidate = String(chars[i...end])
+                if key == nil || candidate.contains("\"\(key!)\"") {
+                    return candidate
+                }
+                i = end + 1
+            } else {
+                i += 1
+            }
+        }
+        return nil
+    }
+
+    private func handleCheckTrendContext(_ args: [String: Any], appState: AppState) async -> String {
+        let queries = normalizedStringArray(args["queries"])
+            .prefix(5)
+            .map { $0 }
+        guard !queries.isEmpty else {
+            return "Error: queries must include one to five topic strings."
+        }
+
+        let sources = normalizedStringArray(args["sources"]).map { $0.lowercased() }
+        let requestedSources = sources.isEmpty ? ["web"] : sources
+        let maxResults = max(1, min(10, args["max_results"] as? Int ?? (args["max_results"] as? Double).map(Int.init) ?? 5))
+
+        if requestedSources.contains(where: { $0 == "x" || $0 == "twitter" || $0 == "twitter_x" }),
+           let xBearerToken = loadXBearerToken() {
+            do {
+                let client = XTrendContextClient(bearerToken: xBearerToken)
+                var searches: [(String, XRecentSearchResponse)] = []
+                for query in queries {
+                    let response = try await client.recentSearch(query: query, maxResults: maxResults)
+                    searches.append((query, response))
+                }
+                return try XTrendContextBuilder.build(searches: searches).prettyJSONString()
+            } catch {
+                return "Error: X trend context check failed — \(error.localizedDescription)"
+            }
+        }
+
+        guard requestedSources.contains("web") else {
+            let context = TrendContext.missingCredentials(sources: requestedSources, queries: queries)
+            return (try? context.prettyJSONString()) ?? "Error: Could not serialize trend credential guidance."
+        }
+
+        guard let apiKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] ?? loadAnthropicKey() else {
+            let context = TrendContext.missingCredentials(sources: requestedSources, queries: queries)
+            return (try? context.prettyJSONString()) ?? "Error: Could not serialize trend credential guidance."
+        }
+
+        let provider = ClaudeProvider(apiKey: apiKey, model: "claude-sonnet-4-6")
+        let queryList = queries.map { "- \($0)" }.joined(separator: "\n")
+        let prompt = """
+        Build current trend evidence for short-form podcast editing.
+
+        Use web_search for each query below. Return ONLY compact JSON with this shape:
+        {
+          "results_by_query": {
+            "query text": [
+              {
+                "id": "short-stable-id",
+                "title": "source headline or post summary",
+                "text": "one sentence explaining the current signal",
+                "url": "https://source-url-or-null",
+                "engagement_score": 0
+              }
+            ]
+          }
+        }
+
+        Rules:
+        - Max \(maxResults) evidence items per query.
+        - Do not invent URLs.
+        - engagement_score is 0-100 from observed recency, prominence, and source/engagement strength.
+        - Prefer evidence useful for deciding whether a podcast clip has timely short-form appeal.
+        - No prose outside the JSON object.
+
+        Queries:
+        \(queryList)
+        """
+
+        do {
+            let response = try await provider.complete(
+                messages: [AIMessage(role: "user", content: prompt)],
+                tools: [],
+                modelOverride: nil,
+                additionalSystemPrompt: nil,
+                enableWebSearch: true,
+                maxWebSearchUses: max(1, min(5, queries.count)),
+                enable1MContext: false
+            )
+            let rawContent = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let json = Self.extractFirstJSONObject(from: rawContent, containing: "results_by_query"),
+                  let data = json.data(using: .utf8) else {
+                return "Error: Could not parse trend context JSON. Raw response:\n\n\(rawContent)"
+            }
+
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            let payload = try decoder.decode(TrendSearchPayload.self, from: data)
+            let context = TrendContextBuilder.build(source: "web", resultsByQuery: payload.resultsByQuery)
+            return try context.prettyJSONString()
+        } catch {
+            return "Error: Trend context check failed — \(error.localizedDescription)"
+        }
+    }
+
+    private struct TrendSearchPayload: Decodable {
+        let resultsByQuery: [String: [TrendEvidence]]
+    }
+
+    private func loadPersistedVisualAnalysis(assetID: UUID, bundleURL: URL) -> VisualAnalysisResult? {
+        let path = bundleURL.appendingPathComponent("analysis/segments/\(assetID.uuidString).json")
+        guard let data = try? Data(contentsOf: path) else { return nil }
+        return try? JSONDecoder().decode(VisualAnalysisResult.self, from: data)
+    }
+
+    private func viralVisualEvidence(for asset: MediaAsset, appState: AppState) -> ViralMomentVisualEvidence {
+        let visual = loadPersistedVisualAnalysis(assetID: asset.id, bundleURL: appState.projectBundleURL)
+        let ranges = (visual?.shotTypes ?? []).map { segment in
+            ViralMomentVisualRange(
+                start: segment.start,
+                end: segment.end,
+                kind: viralVisualKind(for: segment.type)
+            )
+        }
+        let topicBoundaries = (asset.analysis?.sceneDescriptions ?? []).map(\.range.start)
+        return ViralMomentVisualEvidence(ranges: ranges, topicBoundaries: topicBoundaries)
+    }
+
+    private func viralVisualKind(for shotType: ShotType) -> ViralMomentVisualKind {
+        switch shotType {
+        case .talkingHead:
+            return .talkingHead
+        case .bRoll:
+            return .bRoll
+        case .titleCard:
+            return .titleCard
+        case .unknown:
+            return .unknown
+        }
+    }
+
+    private func compactVisualContext(for asset: MediaAsset, appState: AppState) -> String {
+        var lines: [String] = []
+        if let visual = loadPersistedVisualAnalysis(assetID: asset.id, bundleURL: appState.projectBundleURL) {
+            let shotLines = visual.shotTypes.prefix(24).map { segment in
+                let start = TranscriptAnalysisSupport.formatTimestamp(segment.start)
+                let end = TranscriptAnalysisSupport.formatTimestamp(segment.end)
+                return "- [\(start)-\(end)] shot=\(segment.type.rawValue)"
+            }
+            if !shotLines.isEmpty {
+                lines.append("Shot evidence:")
+                lines.append(contentsOf: shotLines)
+            }
+        }
+
+        let scenes = asset.analysis?.sceneDescriptions ?? []
+        if !scenes.isEmpty {
+            lines.append("Scene evidence:")
+            lines.append(contentsOf: scenes.prefix(16).map { scene in
+                let start = TranscriptAnalysisSupport.formatTimestamp(scene.range.start)
+                let end = TranscriptAnalysisSupport.formatTimestamp(scene.range.end)
+                let label = scene.label.map { " label=\($0)" } ?? ""
+                return "- [\(start)-\(end)]\(label) \(scene.description)"
+            })
+        }
+
+        guard !lines.isEmpty else {
+            return "No visual sidecar evidence is available. Do not invent visual quality; rely on transcript, diarization, duration, and audio/verification gates."
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func viralMomentCandidate(from moment: [String: Any], id: String) -> ViralMomentCandidate {
+        let start = moment["clip_start_time"] as? Double ?? 0
+        let end = moment["clip_end_time"] as? Double ?? start
+        let evergreen = intValue(moment["evergreen_score"])
+        let trending = intValue(moment["trending_score"])
+        let hook = moment["hook"] as? String ?? ""
+        let trendEvidence = (moment["trend_evidence"] as? [String]) ?? []
+        return ViralMomentCandidate(
+            id: id,
+            start: start,
+            end: end,
+            evergreenScore: evergreen,
+            trendingScore: trending,
+            hook: hook,
+            trendEvidenceLabels: trendEvidence
+        )
+    }
+
+    private func intValue(_ value: Any?) -> Int {
+        if let value = value as? Int { return value }
+        if let value = value as? Double { return Int(value) }
+        if let value = value as? String, let parsed = Int(value) { return parsed }
+        return 0
+    }
+
+    private func scoreBreakdownDictionary(_ breakdown: ViralMomentScoreBreakdown) -> [String: Any] {
+        [
+            "base": roundToTwoDecimals(breakdown.base),
+            "hook": roundToTwoDecimals(breakdown.hook),
+            "duration": roundToTwoDecimals(breakdown.duration),
+            "trend": roundToTwoDecimals(breakdown.trend),
+            "visual": roundToTwoDecimals(breakdown.visual),
+            "topic_boundary": roundToTwoDecimals(breakdown.topicBoundary),
+            "total": roundToTwoDecimals(breakdown.total),
+        ]
+    }
+
+    private func scoreBreakdownDoubles(_ value: Any?) -> [String: Double] {
+        guard let dictionary = value as? [String: Any] else { return [:] }
+        return dictionary.reduce(into: [String: Double]()) { result, item in
+            if let double = item.value as? Double {
+                result[item.key] = double
+            } else if let int = item.value as? Int {
+                result[item.key] = Double(int)
+            } else if let string = item.value as? String, let double = Double(string) {
+                result[item.key] = double
+            }
+        }
+    }
+
+    private func gradeDictionary(_ grade: ViralMomentPipelineGrade) -> [String: Any] {
+        [
+            "score": grade.score,
+            "priority": grade.priority.rawValue,
+            "taste_status": grade.tasteStatus.rawValue,
+            "warnings": grade.warnings.map(\.rawValue),
+            "best_platforms": grade.bestPlatforms,
+        ]
+    }
+
+    private func pipelineGradeStrings(_ value: Any?) -> [String: String] {
+        guard let dictionary = value as? [String: Any] else { return [:] }
+        var result: [String: String] = [:]
+        for (key, value) in dictionary {
+            if let string = value as? String {
+                result[key] = string
+            } else if let int = value as? Int {
+                result[key] = String(int)
+            } else if let double = value as? Double {
+                result[key] = String(roundToTwoDecimals(double))
+            } else if let strings = value as? [String] {
+                result[key] = strings.joined(separator: ",")
+            }
+        }
+        return result
+    }
+
+    private func roundToTwoDecimals(_ value: Double) -> Double {
+        (value * 100).rounded() / 100
+    }
+
+    private func normalizedStringArray(_ value: Any?) -> [String] {
+        if let values = value as? [String] {
+            return values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        }
+        if let values = value as? [Any] {
+            return values.compactMap { $0 as? String }
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        }
+        if let value = value as? String {
+            return value.split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        }
+        return []
+    }
+
     // MARK: - Upload Short To Library
 
     private func handleUploadShortToLibrary(_ args: [String: Any], appState: AppState) async -> String {
@@ -3566,9 +4306,42 @@ final class MCPServer {
 
         let evergreen = (args["evergreen_score"] as? Int) ?? (args["evergreen_score"] as? Double).map { Int($0) } ?? 0
         let trending = (args["trending_score"] as? Int) ?? (args["trending_score"] as? Double).map { Int($0) } ?? 0
-        let platformFit = (args["platform_fit"] as? [String]) ?? []
+        let pipelineGradeArg = args["pipeline_grade"] as? [String: Any]
+        let platformFit = normalizedStringArray(args["platform_fit"])
         let reasoning = (args["reasoning"] as? String) ?? ""
         let sourceAssetName = (args["source_asset_name"] as? String) ?? asset.name
+        let clampedEvergreen = min(max(evergreen, 0), 10)
+        let clampedTrending = min(max(trending, 0), 10)
+        let weightedScore = (Double(clampedEvergreen) * 0.45 + Double(clampedTrending) * 0.55) * 10
+        let fallbackDistributionScore = Int(weightedScore.rounded())
+        let explicitDistributionScore = intValue(args["distribution_score"])
+        let explicitScorecardScore = intValue(args["scorecard_score"])
+        let explicitPipelineScore = intValue(pipelineGradeArg?["score"])
+        let distributionScore: Int
+        if explicitDistributionScore != 0 {
+            distributionScore = min(100, max(0, explicitDistributionScore))
+        } else if explicitScorecardScore != 0 {
+            distributionScore = min(100, max(0, explicitScorecardScore))
+        } else if explicitPipelineScore != 0 {
+            distributionScore = min(100, max(0, explicitPipelineScore))
+        } else {
+            distributionScore = fallbackDistributionScore
+        }
+        let postingPriority = (args["posting_priority"] as? String)
+            ?? (pipelineGradeArg?["priority"] as? String)
+            ?? (distributionScore >= 85 ? "post_now" : (distributionScore >= 65 ? "queue" : "review"))
+        let scoreWarnings = normalizedStringArray(args["score_warnings"].map { $0 } ?? pipelineGradeArg?["warnings"])
+        let bestPlatforms = normalizedStringArray(args["best_platforms"].map { $0 } ?? pipelineGradeArg?["best_platforms"])
+        let scoreBreakdown = scoreBreakdownDoubles(args["score_breakdown"])
+        var pipelineGrade = pipelineGradeStrings(args["pipeline_grade"])
+        if pipelineGrade.isEmpty {
+            pipelineGrade = [
+                "score": String(distributionScore),
+                "priority": postingPriority,
+                "warnings": scoreWarnings.joined(separator: ","),
+                "best_platforms": bestPlatforms.joined(separator: ","),
+            ]
+        }
 
         // Configure Supabase client. Read from ProcessInfo first, then fall back to
         // .env files via loadEnvKey (matches the pattern used for ANTHROPIC_API_KEY).
@@ -3665,7 +4438,13 @@ final class MCPServer {
                 evergreenScore: evergreen, trendingScore: trending,
                 platformFit: platformFit,
                 sourceStart: sourceStart, sourceEnd: sourceEnd,
-                videoSize: videoSize, reasoning: reasoning
+                videoSize: videoSize, reasoning: reasoning,
+                distributionScore: distributionScore,
+                postingPriority: postingPriority,
+                scoreWarnings: scoreWarnings,
+                bestPlatforms: bestPlatforms,
+                scoreBreakdown: scoreBreakdown,
+                pipelineGrade: pipelineGrade
             )
         )
 
@@ -3701,6 +4480,13 @@ final class MCPServer {
         let maxMoments = args["max_moments"] as? Int ?? (args["max_moments"] as? Double).map({ Int($0) }) ?? 40
         let minDuration = args["min_duration_seconds"] as? Double ?? 15.0
         let maxDuration = args["max_duration_seconds"] as? Double ?? 180.0
+        let maxOverlapRatio = args["max_overlap_ratio"] as? Double ?? 0.5
+        guard (try? ViralMomentScorecard.validatedOverlapRatio(maxOverlapRatio)) != nil else {
+            return "Error: max_overlap_ratio must be between 0 and 1."
+        }
+        let suppliedTrendContext = (args["trend_context"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasSuppliedTrendContext = suppliedTrendContext?.isEmpty == false
 
         // Load transcript
         guard let result = await appState.media.transcriptionService.getTranscript(
@@ -3755,18 +4541,37 @@ final class MCPServer {
 
         // Use claude-opus-4-6 with 1M context for long podcasts (beta header set below)
         let provider = ClaudeProvider(apiKey: apiKey, model: "claude-opus-4-6")
+        let visualEvidence = viralVisualEvidence(for: asset, appState: appState)
+        let visualContext = compactVisualContext(for: asset, appState: appState)
+        let trendResearchInstruction: String
+        let trendContextSection: String
+        if hasSuppliedTrendContext, let suppliedTrendContext {
+            trendResearchInstruction = """
+            Structured trend_context is provided below. Use it as inspectable trend evidence when scoring trending_score. Do not perform extra trend research. Trend alignment is only a boost after hook strength, standalone clarity, energy, payoff, and visual suitability pass.
+            """
+            trendContextSection = """
+
+            Structured trend_context:
+            \(suppliedTrendContext)
+            """
+        } else {
+            trendResearchInstruction = """
+            You have access to a web_search tool. Use it 1-3 times to check current trending topics relevant to the podcast's themes (tech, AI, startups, crypto, culture, etc.) so you can flag moments that ride current waves.
+            """
+            trendContextSection = ""
+        }
 
         let prompt = """
         You are a social-media expert finding EVERY genuinely viral \(Int(minDuration))-\(Int(maxDuration)) second clip in a podcast/interview transcript. Reviewers will curate afterward — your job is to surface all the good ones, not a short top-N.
 
-        You have access to a web_search tool. Use it 1-3 times to check current trending topics relevant to the podcast's themes (tech, AI, startups, crypto, culture, etc.) so you can flag moments that ride current waves.
+        \(trendResearchInstruction)
 
         Pipeline:
-        1. Research: web_search for current trending topics in this podcast's domain.
+        1. Research: use the supplied trend_context if present; otherwise web_search for current trending topics in this podcast's domain.
         2. Extract: find EVERY moment that would make a viewer stop scrolling.
         3. Score each on two independent axes (0-10):
            - evergreen_score: works regardless of current trends (humor, vulnerability, surprise, contrarian takes, specific shocking numbers, quotable lines, back-and-forth tension, raw emotion). Think "still funny/shocking/interesting 5 years from now."
-           - trending_score: ties into what's trending NOW (check web_search). Extra value from timeliness.
+           - trending_score: ties into what's trending NOW (from supplied trend_context or web_search). Extra value from timeliness.
         4. Include a moment if EITHER score is ≥7, OR the combined score is ≥10. Do not drop strong evergreen content just because it isn't currently trending — classic roasts, personal confessions, and quotable humor are always viral.
         5. Output: return ONLY the JSON block described below.
 
@@ -3784,6 +4589,14 @@ final class MCPServer {
         - Names people are currently talking about (from web_search)
         - Products/events in this week's news cycle
         - Memes or discourse happening RIGHT NOW
+
+        Visual evidence:
+        \(visualContext)
+
+        Use visual evidence as a discriminator:
+        - Prefer moments with talking-head presence, clear scene evidence, or a natural visual/topic boundary.
+        - Do not promote moments whose transcript is strong but visual evidence is absent or weak unless the evergreen hook is clearly excellent.
+        - If visual evidence is unavailable, say so implicitly through conservative visual assumptions; do not invent visual quality.
 
         Exclude:
         - Long monologues without a hook
@@ -3813,6 +4626,7 @@ final class MCPServer {
               "evergreen_score": 8,
               "trending_score": 3,
               "category": "evergreen" | "trending" | "both",
+              "trend_evidence": ["optional matching trend_context signal labels or web evidence labels"],
               "platform_fit": ["youtube_shorts", "instagram_reels", "tiktok", "twitter", "linkedin"],
               "reasoning": "one sentence on why this is viral",
               "cold_open_recommended": true,
@@ -3863,6 +4677,7 @@ final class MCPServer {
 
         Input transcript:
         \(wordJSON)
+        \(trendContextSection)
         """
 
         do {
@@ -3871,8 +4686,8 @@ final class MCPServer {
                 tools: [],
                 modelOverride: nil,
                 additionalSystemPrompt: nil,
-                enableWebSearch: true,
-                maxWebSearchUses: 5,
+                enableWebSearch: !hasSuppliedTrendContext,
+                maxWebSearchUses: hasSuppliedTrendContext ? 0 : 5,
                 enable1MContext: true
             )
 
@@ -3934,14 +4749,42 @@ final class MCPServer {
                 }
                 return m
             }
-            let droppedCount = rawCount - moments.count
+            let durationDroppedCount = rawCount - moments.count
+
+            let indexedMoments = moments.enumerated().map { index, moment in
+                (id: String(index), moment: moment)
+            }
+            let scoreInputs = indexedMoments.map { viralMomentCandidate(from: $0.moment, id: $0.id) }
+            let ranked = ViralMomentScorecard.rank(
+                scoreInputs,
+                visualEvidence: visualEvidence,
+                limit: maxMoments,
+                maxOverlapRatio: maxOverlapRatio
+            )
+            let momentByID = Dictionary(uniqueKeysWithValues: indexedMoments.map { ($0.id, $0.moment) })
+            moments = ranked.compactMap { scored in
+                guard var moment = momentByID[scored.candidate.id] else { return nil }
+                moment["scorecard_score"] = roundToTwoDecimals(scored.breakdown.total)
+                moment["score_breakdown"] = scoreBreakdownDictionary(scored.breakdown)
+                moment["distribution_score"] = scored.grade.score
+                moment["posting_priority"] = scored.grade.priority.rawValue
+                moment["taste_status"] = scored.grade.tasteStatus.rawValue
+                moment["score_warnings"] = scored.grade.warnings.map(\.rawValue)
+                moment["best_platforms"] = scored.grade.bestPlatforms
+                moment["pipeline_grade"] = gradeDictionary(scored.grade)
+                return moment
+            }
+            let overlapDroppedCount = max(0, scoreInputs.count - moments.count)
 
             // Build human-readable summary
             var output = "=== VIRAL MOMENTS ===\n"
             output += "Asset: \(asset.name)\n"
-            output += "Cap: \(maxMoments) moments (\(Int(minDuration))-\(Int(maxDuration))s)\n"
+            output += "Cap: \(maxMoments) moments (\(Int(minDuration))-\(Int(maxDuration))s, overlap ≤ \(String(format: "%.2f", maxOverlapRatio)))\n"
             output += "Found: \(moments.count) moments"
-            if droppedCount > 0 { output += " (\(droppedCount) dropped for invalid duration)" }
+            var dropNotes: [String] = []
+            if durationDroppedCount > 0 { dropNotes.append("\(durationDroppedCount) invalid-duration") }
+            if overlapDroppedCount > 0 { dropNotes.append("\(overlapDroppedCount) overlap/scorecard") }
+            if !dropNotes.isEmpty { output += " (\(dropNotes.joined(separator: ", ")) dropped)" }
             output += "\n\n"
 
             for (index, moment) in moments.enumerated() {
@@ -3958,6 +4801,11 @@ final class MCPServer {
                 let evergreen = moment["evergreen_score"] as? Int ?? (moment["evergreen_score"] as? Double).map({ Int($0) }) ?? 0
                 let trending = moment["trending_score"] as? Int ?? (moment["trending_score"] as? Double).map({ Int($0) }) ?? 0
                 let category = moment["category"] as? String ?? ""
+                let scorecardScore = moment["scorecard_score"] as? Double
+                let distributionScore = moment["distribution_score"] as? Int
+                let postingPriority = (moment["posting_priority"] as? String)?.replacingOccurrences(of: "_", with: " ")
+                let tasteStatus = (moment["taste_status"] as? String)?.replacingOccurrences(of: "_", with: " ")
+                let warnings = (moment["score_warnings"] as? [String] ?? [])
 
                 let startFormatted = TranscriptAnalysisSupport.formatTimestamp(startTime)
                 let endFormatted = TranscriptAnalysisSupport.formatTimestamp(endTime)
@@ -3977,6 +4825,17 @@ final class MCPServer {
                 output += "  End:   [\(endFormatted)] (\(String(format: "%.2f", endTime))s)\n"
                 output += "  Duration: \(String(format: "%.1f", duration))s\n"
                 output += "  Scores: evergreen=\(evergreen)/10, trending=\(trending)/10\(category.isEmpty ? "" : " [\(category)]")\n"
+                if let scorecardScore {
+                    output += "  Scorecard: \(String(format: "%.1f", scorecardScore)) (hook+duration+trend+visual/topic evidence)\n"
+                }
+                if let distributionScore {
+                    let priorityText = postingPriority ?? "review"
+                    let tasteText = tasteStatus ?? "downgrade"
+                    output += "  Pipeline grade: \(distributionScore)/100 • \(priorityText) • \(tasteText)\n"
+                    if !warnings.isEmpty {
+                        output += "  Warnings: \(warnings.joined(separator: ", "))\n"
+                    }
+                }
                 if !platformDisplay.isEmpty {
                     output += "  Ships on: \(platformDisplay)\n"
                 }
@@ -5420,6 +6279,19 @@ final class MCPServer {
                         if !value.isEmpty { return value }
                     }
                 }
+            }
+        }
+        return nil
+    }
+
+    private func loadXBearerToken() -> String? {
+        let keys = ["X_BEARER_TOKEN", "TWITTER_BEARER_TOKEN"]
+        for key in keys {
+            if let value = ProcessInfo.processInfo.environment[key], !value.isEmpty {
+                return value
+            }
+            if let value = loadEnvKey(key), !value.isEmpty {
+                return value
             }
         }
         return nil

@@ -1,7 +1,7 @@
 ---
 name: podcast-episode-producer
 description: Produce edited podcast episodes from raw recordings. Handles transcription, episode detection, extraction, overlay setup, cuts, and export. Use when the user asks to produce a podcast episode, extract an episode, set up overlays or lower thirds, export a podcast, or work on Technologia Talks.
-allowed-tools: import_media add_to_timeline transcribe_asset analyze_transcript extract_segment get_transcript_with_timing search_transcript set_overlay_config remove_section split_clip ripple_delete export_video save_snapshot restore_snapshot get_state set_caption_style set_zoom take_screenshot
+allowed-tools: import_media add_to_timeline transcribe_asset analyze_transcript extract_segment get_transcript_with_timing search_transcript set_overlay_config find_broll_opportunities generate_broll_asset start_broll_video_job poll_broll_video_job search_local_broll search_broll insert_broll remove_section split_clip ripple_delete export_video save_snapshot restore_snapshot get_state set_caption_style set_zoom take_screenshot verify_playback
 ---
 
 # Podcast Episode Producer
@@ -226,7 +226,23 @@ Audio quality affects listener retention as much as story. Professional-sounding
 3. `export_video` preset="high" filename="EpisodeN_Title"
 4. Verify export file exists and has reasonable size
 
-## Step 6: Generate YouTube metadata (hook-driven strategy)
+## Step 6: Add B-roll visual polish
+
+B-roll is mandatory for modern podcast edits unless the episode is intentionally unbroken talking-head footage.
+
+1. Call `find_broll_opportunities` with `platform="podcast"` after the episode is extracted and cleaned.
+2. Select opportunities that explain abstract topics, support statistics, cover hard cuts, or visually reinforce chapter transitions.
+3. Prefer actual video B-roll for missing visuals:
+   - For generated B-roll, call `start_broll_video_job`, then `poll_broll_video_job` until it returns an imported MP4 `asset_id`.
+   - If OpenRouter credentials are missing, call `search_local_broll` with the opportunity's `search_query`; import a selected local file and then call `insert_broll`.
+   - If local search has no match, call `search_broll` with `query=search_query`, `download=true`, `insert_at=timeline_start`, and `duration=3-6`.
+   - Use `generate_broll_asset` only as a still visual-support fallback. If you insert a still, pass `allow_still_visual_support=true` and do not describe it as actual video B-roll.
+4. Call `insert_broll` with `placement="overlay"` by default when the fallback did not already insert the clip. Use 3-6 seconds for full podcast episodes.
+5. Run `verify_playback` after insertion and fix any silent/black/incorrect-frame failures before export.
+
+Prompt generated video B-roll with a concrete structure: style/intent, subject, scene, action, camera movement, composition, lighting/tone, format, duration, audio, and constraints. Keep 3-6 second podcast B-roll mostly single-shot, silent, stable, and documentary-real. Avoid captions, readable text, real logos, famous likenesses, and unsupported factual claims.
+
+## Step 7: Generate YouTube metadata (hook-driven strategy)
 
 After export, create metadata that hooks viewers immediately. Your title, description, and chapter list are marketing tools, not just organization.
 
@@ -331,7 +347,7 @@ YouTube's algorithm prioritizes watch time and click-through rate. A compelling 
 
 **Present this to the user after export. Do not skip this step.**
 
-## Step 7: Generate Thumbnail
+## Step 8: Generate Thumbnail
 
 After export, generate a branded thumbnail using `generate_thumbnail`. The default provider is `"local"` — a programmatic renderer that uses real host photos with background removal, perfect text, and brand colors. No AI API calls needed.
 

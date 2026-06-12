@@ -60,6 +60,7 @@ public struct AIToolRegistry: Sendable {
         getState,
         autoCut,
         analyzeTranscript,
+        checkTrendContext,
         findViralMoments,
         uploadShortToLibrary,
         getFullTranscript,
@@ -210,13 +211,25 @@ public struct AIToolRegistry: Sendable {
 
     public static let findViralMoments = AIToolDefinition(
         name: "find_viral_moments",
-        description: "Find the best viral clip moments in a transcribed podcast or interview (typical span 15–180s per moment). Sends the full diarized transcript to Claude which identifies contrarian claims, surprising stats, emotional peaks, quotable one-liners, and self-contained moments. Returns a ranked list with exact word-level timestamps. Requires a transcript with speaker diarization.",
+        description: "Find the best viral clip moments in a transcribed podcast or interview. Sends the full diarized transcript to Claude which identifies contrarian claims, surprising stats, emotional peaks, quotable one-liners, and self-contained moments that work without prior context. Returns a ranked list with exact word-level timestamps. Requires a transcript with speaker diarization — run transcribe_asset with Deepgram first.",
         parameters: .object([
             "asset_id": .init(type: "string", description: "UUID of the asset to analyze"),
             "max_moments": .init(type: "number", description: "Maximum number of viral moments to return (default: 40)"),
             "min_duration_seconds": .init(type: "number", description: "Minimum clip duration in seconds (default: 15)"),
-            "max_duration_seconds": .init(type: "number", description: "Maximum clip duration in seconds (default: 180). YouTube Shorts caps at 59s, Reels at 90s — filter downstream by platform."),
+            "max_duration_seconds": .init(type: "number", description: "Maximum clip duration in seconds (default: 180). YouTube Shorts caps at 59s, Reels at 90s, TikTok/LinkedIn go longer. Filter downstream by platform."),
+            "max_overlap_ratio": .init(type: "number", description: "Optional near-duplicate suppression threshold from 0-1 (default 0.5). Lower-scored candidates overlapping a kept candidate above this ratio are removed."),
+            "trend_context": .init(type: "string", description: "Optional JSON returned by check_trend_context. Use it as explicit trend evidence when scoring trending_score; trend matches are boosts only, never replacements for hook strength and standalone clarity."),
         ], required: ["asset_id"])
+    )
+
+    public static let checkTrendContext = AIToolDefinition(
+        name: "check_trend_context",
+        description: "Build structured current-trend context for short-form planning. Use for timely podcast topics before find_viral_moments. Returns provider-neutral trend_context signals with source, label, keywords, weight, reason, and evidence. Uses X recent search when X_BEARER_TOKEN or TWITTER_BEARER_TOKEN is configured; otherwise uses web when requested or returns setup guidance. Trend matches are boosts only; never use them instead of hook strength, standalone clarity, energy, payoff, and verification.",
+        parameters: .object([
+            "queries": .init(type: "array", description: "One to five specific topic queries from the episode", items: .init(type: "string")),
+            "sources": .init(type: "array", description: "Trend sources to check. Supports 'web' and 'x'. X uses X_BEARER_TOKEN or TWITTER_BEARER_TOKEN when configured, otherwise returns setup guidance.", items: .init(type: "string")),
+            "max_results": .init(type: "number", description: "Maximum evidence items per query (default 5)"),
+        ], required: ["queries"])
     )
 
     public static let uploadShortToLibrary = AIToolDefinition(
@@ -232,6 +245,12 @@ public struct AIToolRegistry: Sendable {
             "evergreen_score": .init(type: "number", description: "0-10; default 0"),
             "trending_score": .init(type: "number", description: "0-10; default 0"),
             "platform_fit": .init(type: "array", description: "Platforms this duration fits", items: .init(type: "string")),
+            "distribution_score": .init(type: "number", description: "0-100 pipeline grade score from find_viral_moments"),
+            "posting_priority": .init(type: "string", description: "post_now, queue, or review"),
+            "score_warnings": .init(type: "array", description: "Pipeline warning chips such as weak_hook, missing_visual_support, too_short", items: .init(type: "string")),
+            "best_platforms": .init(type: "array", description: "Best-fit destination platforms from the pipeline grade", items: .init(type: "string")),
+            "score_breakdown": .init(type: "object", description: "Numeric scorecard breakdown emitted by find_viral_moments"),
+            "pipeline_grade": .init(type: "object", description: "Full pipeline grade emitted by find_viral_moments"),
             "reasoning": .init(type: "string", description: "Why-viral explanation"),
             "source_asset_name": .init(type: "string", description: "Display name of source asset (e.g. podcast episode title)"),
         ], required: ["asset_id", "source_start", "source_end", "video_path", "label", "hook"])
@@ -268,13 +287,9 @@ public struct AIToolRegistry: Sendable {
         ], required: ["asset_id"])
     )
 
-    public static let detectEpisodes = AIToolDefinition(
-        name: "detect_episodes",
-        description: "Detect episode boundaries using intro phrases, energy analysis, and meta-talk detection.",
-        parameters: .object([
-            "asset_id": .init(type: "string", description: "UUID of the asset"),
-        ], required: ["asset_id"])
-    )
+    // Note: `detect_episodes` is defined as MCP-only in MCPServer (handler invokes
+    // EpisodeBoundaryDetector). Don't add a duplicate definition here — the registry
+    // path doesn't have a handler and would shadow the working MCP one on dedupe.
 
     public static let scoreContent = AIToolDefinition(
         name: "score_content",
@@ -557,13 +572,13 @@ public struct AIToolRegistry: Sendable {
 
     public static let autoReframe = AIToolDefinition(
         name: "auto_reframe",
-        description: "Analyze video and generate crop regions for a target aspect ratio (face-aware). When apply is true (default), also sets the first timeline clip’s cropRect for that asset to the average region — disable with apply:false for analysis-only.",
+        description: "Analyze video and generate crop regions for a target aspect ratio. Tracks faces to keep subjects centered. By default also APPLIES the average crop to the matching timeline clip via setClipCrop (pass apply=false to analyze only).",
         parameters: .object([
             "asset_id": .init(type: "string", description: "UUID of the asset to analyze"),
             "aspect_ratio": .init(type: "string", description: "Target: 9:16 (vertical), 1:1 (square), 4:5 (portrait), 16:9, 21:9"),
-            "start": .init(type: "number", description: "Optional source start time in seconds for analysis window"),
-            "end": .init(type: "number", description: "Optional source end time in seconds for analysis window"),
-            "apply": .init(type: "boolean", description: "If true (default), apply average crop to the timeline clip for this asset"),
+            "apply": .init(type: "boolean", description: "If true (default), set the clip's cropRect to the average crop region. Pass false to analyze without mutating the timeline."),
+            "start": .init(type: "number", description: "Optional source-time start of the range to analyze."),
+            "end": .init(type: "number", description: "Optional source-time end of the range to analyze."),
         ], required: ["asset_id", "aspect_ratio"])
     )
 
@@ -592,7 +607,7 @@ public struct AIToolRegistry: Sendable {
 
     public static let applyPersonMask = AIToolDefinition(
         name: "apply_person_mask",
-        description: "Apply AI person segmentation to isolate subjects from background. Uses Vision framework.",
+        description: "STUB: returns a canned success string. The PersonMasker engine exists but is not wired to clip mutation in the analysis-tool handler. Calling this tool does NOT modify the clip or render anything new at preview/export.",
         parameters: .object([
             "clip_id": .init(type: "string", description: "UUID of the video clip"),
             "action": .init(type: "string", description: "isolate (transparent bg), replace_color, or replace_image"),
@@ -611,7 +626,7 @@ public struct AIToolRegistry: Sendable {
 
     public static let voiceCleanup = AIToolDefinition(
         name: "voice_cleanup",
-        description: "One-click voice enhancement: noise reduction + EQ + compression. Presets: standard, podcast, interview, presentation, music.",
+        description: "STUB: returns a text description of the chosen preset. No DSP runs. Use `set_track_audio_effects` to actually apply EQ + compression on the audio track.",
         parameters: .object([
             "clip_id": .init(type: "string", description: "UUID of the audio clip (optional — applies to all if omitted)"),
             "preset": .init(type: "string", description: "Cleanup preset (default: standard)"),
@@ -620,7 +635,7 @@ public struct AIToolRegistry: Sendable {
 
     public static let denoiseAudio = AIToolDefinition(
         name: "denoise_audio",
-        description: "Remove background noise from audio using a noise gate.",
+        description: "STUB: returns a canned line — no audio is modified. Use `set_track_audio_effects` with a gate or compressor to actually reduce noise on the track.",
         parameters: .object([
             "clip_id": .init(type: "string", description: "UUID of the clip"),
             "threshold_db": .init(type: "number", description: "Noise floor in dB (default -40)"),
@@ -638,7 +653,7 @@ public struct AIToolRegistry: Sendable {
 
     public static let stabilizeVideo = AIToolDefinition(
         name: "stabilize_video",
-        description: "Remove camera shake from video using motion analysis.",
+        description: "ANALYSIS ONLY: runs VideoStabilizer.analyze and returns a summary (frame count, crop factor). Does NOT persist transforms or apply stabilization at preview/export.",
         parameters: .object([
             "asset_id": .init(type: "string", description: "UUID of the video asset"),
             "smoothing": .init(type: "number", description: "Smoothing factor 0-1 (default 0.8, higher = smoother)"),
@@ -672,7 +687,7 @@ public struct AIToolRegistry: Sendable {
 
     public static let autoDuck = AIToolDefinition(
         name: "auto_duck",
-        description: "Automatically duck music volume during speech. Analyzes transcript to find speech regions and lowers music.",
+        description: "STUB: returns a canned line. The AudioDucker engine exists but is NOT invoked from the analysis-tool handler, and ducking is not yet wired into CompositionBuilder. To get an audible duck today, call `set_track_volume` on the music track around speech regions identified via transcript.",
         parameters: .object([
             "music_track_id": .init(type: "string", description: "UUID of the music track"),
             "duck_level": .init(type: "number", description: "Volume during speech 0-1 (default 0.2)"),
@@ -881,9 +896,16 @@ public struct AIToolRegistry: Sendable {
 
     // MARK: - Audio processing tools
 
+    // NOTE: per-clip audio FX (gate/compressor/de-esser/EQ/limiter/LUFS) write to
+    // `clip.audioEffects`, but `CompositionBuilder` only attaches AudioEffectTap from
+    // `track.audioEffectChain`. Until per-clip effects are wired into composition,
+    // the persisted config does NOT affect playback or export. Use `set_track_audio_effects`
+    // for effects you actually want to hear. The descriptions below say so explicitly so
+    // the agent stops confidently reporting "applied" when nothing audible changed.
+
     public static let applyGate = AIToolDefinition(
         name: "apply_gate",
-        description: "Apply a noise gate to an audio clip. Silences audio below the threshold. Use to remove background noise between speech.",
+        description: "WRITES per-clip noise gate config to clip.audioEffects. WARNING: per-clip audio FX are NOT yet rendered at preview/export — only `set_track_audio_effects` is honored by the audio engine. Prefer that tool unless you specifically need the persisted config for a future migration.",
         parameters: .object([
             "clip_id": .init(type: "string", description: "UUID of the audio clip"),
             "threshold_db": .init(type: "number", description: "Gate threshold in dB (default -40)"),
@@ -894,7 +916,7 @@ public struct AIToolRegistry: Sendable {
 
     public static let applyCompressor = AIToolDefinition(
         name: "apply_compressor",
-        description: "Apply dynamic range compression to an audio clip. Reduces volume peaks and evens out loudness.",
+        description: "WRITES per-clip compressor config to clip.audioEffects. WARNING: per-clip audio FX are NOT yet rendered at preview/export — only `set_track_audio_effects` is honored. Prefer that tool for audible compression.",
         parameters: .object([
             "clip_id": .init(type: "string", description: "UUID of the audio clip"),
             "ratio": .init(type: "number", description: "Compression ratio (default 4)"),
@@ -907,7 +929,7 @@ public struct AIToolRegistry: Sendable {
 
     public static let applyDeEsser = AIToolDefinition(
         name: "apply_de_esser",
-        description: "Apply de-esser to reduce sibilance (harsh 's' and 'sh' sounds) in speech.",
+        description: "WRITES per-clip de-esser config to clip.audioEffects. WARNING: per-clip audio FX are NOT yet rendered at preview/export — only `set_track_audio_effects` is honored. Prefer that tool for audible de-essing.",
         parameters: .object([
             "clip_id": .init(type: "string", description: "UUID of the audio clip"),
             "center_freq_hz": .init(type: "number", description: "Center frequency in Hz (default 5500)"),
@@ -917,7 +939,7 @@ public struct AIToolRegistry: Sendable {
 
     public static let applyEQ = AIToolDefinition(
         name: "apply_eq",
-        description: "Apply parametric EQ to an audio clip. Specify bands with frequency, gain, Q factor, and filter type.",
+        description: "WRITES per-clip parametric EQ config to clip.audioEffects. WARNING: per-clip audio FX are NOT yet rendered at preview/export — only `set_track_audio_effects` is honored. Prefer that tool for audible EQ.",
         parameters: .object([
             "clip_id": .init(type: "string", description: "UUID of the audio clip"),
             "bands": .init(type: "array", description: "Array of EQ band objects: {freq_hz, gain_db, q, filter_type}. Filter types: peak, lowShelf, highShelf, lowPass, highPass, bandPass, notch.", items: .init(type: "object")),
@@ -926,7 +948,7 @@ public struct AIToolRegistry: Sendable {
 
     public static let applyLimiter = AIToolDefinition(
         name: "apply_limiter",
-        description: "Apply a brick-wall limiter to prevent audio clipping. Catches peaks above the threshold.",
+        description: "WRITES per-clip limiter config to clip.audioEffects. WARNING: per-clip audio FX are NOT yet rendered at preview/export — only `set_track_audio_effects` is honored. Prefer that tool for audible limiting.",
         parameters: .object([
             "clip_id": .init(type: "string", description: "UUID of the audio clip"),
             "threshold_db": .init(type: "number", description: "Limiter threshold in dB (default -6)"),
@@ -937,7 +959,7 @@ public struct AIToolRegistry: Sendable {
 
     public static let normalizeAudioToLUFS = AIToolDefinition(
         name: "normalize_audio_to_lufs",
-        description: "Normalize audio to a target LUFS level. Supports comma-separated clip IDs to normalize multiple clips at once.",
+        description: "WRITES per-clip LUFS target to clip.audioEffects. WARNING: this is currently config-only and is NOT applied at preview/export. To actually normalize loudness on export, use `normalize_audio` (registry-only direct tool) or set track-level effects via `set_track_audio_effects`.",
         parameters: .object([
             "clip_id": .init(type: "string", description: "UUID of the audio clip (supports comma-separated for multiple clips)"),
             "target_lufs": .init(type: "number", description: "Target loudness in LUFS (default -16)"),
@@ -946,7 +968,7 @@ public struct AIToolRegistry: Sendable {
 
     public static let analyzeAudioSpectrum = AIToolDefinition(
         name: "analyze_audio_spectrum",
-        description: "Analyze the frequency spectrum of an audio clip over a time range. Returns frequency distribution data for diagnostics.",
+        description: "STUB: returns a canned summary text — no FFT or real spectrum analysis runs.",
         parameters: .object([
             "clip_id": .init(type: "string", description: "UUID of the audio clip"),
             "start": .init(type: "number", description: "Start time in seconds (default 0)"),
@@ -956,7 +978,7 @@ public struct AIToolRegistry: Sendable {
 
     public static let applySpectralNoiseReduction = AIToolDefinition(
         name: "apply_spectral_noise_reduction",
-        description: "Apply spectral noise reduction targeting specific frequencies. Use analyze_audio_spectrum first to identify problem frequencies.",
+        description: "STUB: returns a canned line — no audio is filtered. No spectral processing is applied to the clip.",
         parameters: .object([
             "clip_id": .init(type: "string", description: "UUID of the audio clip"),
             "frequencies_hz": .init(type: "array", description: "Array of frequencies in Hz to reduce", items: .init(type: "number")),
@@ -967,7 +989,7 @@ public struct AIToolRegistry: Sendable {
 
     public static let addTextOverlay = AIToolDefinition(
         name: "add_text_overlay",
-        description: "Add a text overlay to a video clip. Supports positioning, styling, and animation.",
+        description: "WRITES a TextOverlay record to clip.textOverlays (model-only). WARNING: text overlays are NOT yet rendered by EffectCompositor / export — the data is persisted but never drawn on frames. For visible on-screen text today use captions (`set_caption_style` + `set_caption_timing`) or broadcast overlays (`set_overlay_config`).",
         parameters: .object([
             "clip_id": .init(type: "string", description: "UUID of the video clip"),
             "text": .init(type: "string", description: "Text to display"),
@@ -1001,7 +1023,7 @@ public struct AIToolRegistry: Sendable {
 
     public static let applySpeedRamp = AIToolDefinition(
         name: "apply_speed_ramp",
-        description: "Apply a speed ramp to a clip. Smoothly transitions playback speed from speed_start to speed_end over the time range.",
+        description: "WRITES a `speed` keyframe track to clip.keyframes (model-only). WARNING: CompositionBuilder uses scalar `clip.speed` only and never samples the speed keyframe track, so the ramp is NOT yet honored at preview/export. For an actual speed change today use `set_clip_speed` (constant) or split the clip into segments with different scalar speeds.",
         parameters: .object([
             "clip_id": .init(type: "string", description: "UUID of the clip"),
             "start_time": .init(type: "number", description: "Start time in seconds"),
@@ -1016,11 +1038,11 @@ public struct AIToolRegistry: Sendable {
 
     public static let setCaptionTiming = AIToolDefinition(
         name: "set_caption_timing",
-        description: "Set caption timing mode. Sync to transcript for automatic timing, or provide manual word timings.",
+        description: "STUB: returns a canned line — no caption timing is set. The handler does not mutate state and word_timings is unused. Captions still render based on transcript word timings via `set_caption_style`.",
         parameters: .object([
             "clip_id": .init(type: "string", description: "UUID of the clip"),
             "sync_to_transcript": .init(type: "boolean", description: "Sync caption timing to transcript (default true)"),
-            "word_timings": .init(type: "array", description: "Optional manual word timings array", items: .init(type: "object")),
+            "word_timings": .init(type: "array", description: "Optional manual word timings array (currently ignored)", items: .init(type: "object")),
         ], required: ["clip_id"])
     )
 
@@ -1028,9 +1050,9 @@ public struct AIToolRegistry: Sendable {
 
     public static let exportVideo = AIToolDefinition(
         name: "export_video",
-        description: "Export the current timeline as a video file. Renders all tracks, effects, and overlays.",
+        description: "Export the current timeline to an MP4 file. Returns the file path. Presets: 'low' (480p), 'medium' (720p), 'high' (1080p), '4k' (2160p). Exports to the default folder if set (use set_export_folder), otherwise tmp.",
         parameters: .object([
-            "preset": .init(type: "string", description: "Export quality preset: high, medium, low, proxy (default high)"),
+            "preset": .init(type: "string", description: "Quality preset: low, medium, high (default), 4k"),
             "filename": .init(type: "string", description: "Output filename (optional, auto-generated if omitted)"),
         ], required: [])
     )
@@ -1039,7 +1061,7 @@ public struct AIToolRegistry: Sendable {
 
     public static let generateThumbnail = AIToolDefinition(
         name: "generate_thumbnail",
-        description: "Generate YouTube thumbnails using AI. Composites host photos with styled text and backgrounds. Produces multiple options from different AI models (GPT Image 1.5 + Nano Banana 2). Requires OPENAI_API_KEY and/or GEMINI_API_KEY.",
+        description: "Generate YouTube thumbnails using AI. Composites host photos with styled text and backgrounds. Producers: BFL Flux + Google Gemini + a local renderer fallback (NOT OpenAI). Requires BFL_API_KEY and/or GEMINI_API_KEY for AI providers.",
         parameters: .object([
             "title": .init(type: "string", description: "Episode/video title text for the thumbnail"),
             "description": .init(type: "string", description: "Episode description for AI styling context"),
@@ -1055,7 +1077,7 @@ public struct AIToolRegistry: Sendable {
 
     public static let generateCarousel = AIToolDefinition(
         name: "generate_carousel",
-        description: "Generate Instagram carousel slides (1080x1080) using AI. Each slide gets a styled image with text overlay. Uses Claude for prompt generation, then GPT Image 1.5 and/or Nano Banana 2.",
+        description: "Generate Instagram carousel slides (1080x1080) using AI. Each slide gets a styled image with text overlay. Uses Claude for prompt generation, then BFL Flux and/or Google Gemini for images.",
         parameters: .object([
             "title": .init(type: "string", description: "Carousel title (consistent branding across slides)"),
             "slides": .init(type: "array", description: "Array of slide objects with 'text' (required) and 'image_description' (optional)"),
@@ -1214,8 +1236,9 @@ public struct AIToolResolver: Sendable {
             let color = arguments["color"] as? String ?? "#FF0000"
             return [.setMarker(at: time, label: label, color: color)]
 
-        case "remove_silence":
-            // Handled upstream in AIChatController (needs AppState)
+        case "remove_silence", "remove_section", "ripple_delete", "normalize_audio":
+            // Handled upstream in AIChatController / MCPServer (needs AppState).
+            // Cannot run inside `batch` — batch will reject these names with a clear error.
             return []
 
         case "set_clip_volume":
@@ -1452,21 +1475,9 @@ public struct AIToolResolver: Sendable {
             return [.deleteMarker(markerID: markerID)]
 
         case "set_overlay_config":
-            let enabled = arguments["enabled"] as? Bool ?? true
-            let config = BroadcastOverlayConfig(
-                isEnabled: enabled,
-                episodeTitle: arguments["episode_title"] as? String ?? "",
-                episodeSubtitle: arguments["episode_subtitle"] as? String ?? "",
-                hostA: HostInfo(
-                    name: arguments["host_a_name"] as? String ?? "",
-                    title: arguments["host_a_title"] as? String ?? ""
-                ),
-                hostB: HostInfo(
-                    name: arguments["host_b_name"] as? String ?? "",
-                    title: arguments["host_b_title"] as? String ?? ""
-                )
-            )
-            return [.setBroadcastOverlay(config: config)]
+            // Handled upstream in AIChatController / MCPServer (handleSetOverlayConfig)
+            // so template / topics / chapters / sponsors merge logic is shared.
+            return []
 
         case "get_overlay_config":
             // Read-only — handled by AIChatController, not via intents
@@ -1558,6 +1569,8 @@ public struct AIToolResolver: Sendable {
                 newIndex = i
             } else if let d = arguments["new_index"] as? Double {
                 newIndex = Int(d.rounded())
+            } else if let s = arguments["new_index"] as? String, let i = Int(s) {
+                newIndex = i
             } else {
                 throw AIToolError.invalidArgument("Missing new_index (number)")
             }
@@ -1580,17 +1593,44 @@ public struct AIToolResolver: Sendable {
                   let ops = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
                 throw AIToolError.invalidArgument("operations must be a valid JSON array string")
             }
-            let appStateTools: Set<String> = [
-                "undo", "redo", "play_pause", "seek", "toggle_loop", "get_action_log",
-                "remove_silence",
+            // Tools that require AppState / MCP-direct dispatch and cannot be composed
+            // through the resolver's intent pipeline. Reject them up-front with a clear
+            // error so the agent can call them as standalone operations instead.
+            let upstreamTools: Set<String> = [
+                // Pure AppState/playback
+                "undo", "redo", "play_pause", "seek", "toggle_loop", "get_action_log", "activate_skill",
+                // Need AppState — handled in AIChatController / MCPServer, resolver returns []
+                "remove_silence", "remove_section", "ripple_delete", "normalize_audio",
+                // MCP-direct only (no resolver case)
+                "add_to_timeline", "clear_project", "import_media", "delete_asset", "fix_av_links",
+                "create_project", "open_project", "save_project", "list_projects", "close_project",
+                "delete_project", "rename_project", "save_snapshot", "list_snapshots", "restore_snapshot",
+                "set_export_folder", "get_export_folder", "add_media_folder", "list_media_folders",
+                "export_video", "export_for_platform", "list_platforms", "upload_short_to_library",
+                "make_short", "create_short", "extract_clips", "extract_segment", "analyze_for_shorts",
+                "generate_title", "generate_thumbnail", "generate_short_thumbnail", "generate_carousel",
+                "search_broll", "search_local_broll", "auto_insert_broll",
+                "find_broll_opportunities", "generate_broll_asset",
+                "start_broll_video_job", "poll_broll_video_job", "insert_broll",
+                "hook_optimize",
+                "transcribe_asset", "search_transcript", "analyze_transcript", "find_viral_moments",
+                "check_trend_context",
+                "auto_cut", "classify_audio", "score_content", "segment_topics", "detect_episodes",
+                "delete_transcript_range", "remove_filler_words", "get_visual_scenes",
+                "get_transcript", "get_full_transcript", "get_transcript_with_timing",
+                "analyze_audio_energy", "set_track_audio_effects", "take_screenshot", "set_zoom",
+                "get_state", "verify_playback", "test_feature",
             ]
             var allIntents: [EditorIntent] = []
             for op in ops {
                 guard let toolName = op["tool"] as? String else {
                     throw AIToolError.invalidArgument("Each operation must have a 'tool' field")
                 }
-                guard !appStateTools.contains(toolName) else {
-                    throw AIToolError.invalidArgument("'\(toolName)' cannot be used inside batch")
+                guard !upstreamTools.contains(toolName) else {
+                    throw AIToolError.invalidArgument("'\(toolName)' cannot be used inside batch — call it as a standalone operation. batch only supports timeline-mutation intents.")
+                }
+                guard toolName != "batch" else {
+                    throw AIToolError.invalidArgument("Nested batch is not supported")
                 }
                 let opArgs = op["args"] as? [String: Any] ?? [:]
                 let intents = try resolve(toolName: toolName, arguments: opArgs, assets: assets)
@@ -1716,7 +1756,7 @@ public struct AIToolResolver: Sendable {
             return []
 
         // AppState tools — handled upstream in AIChatController/MCPServer, not via intents
-        case "undo", "redo", "play_pause", "seek", "toggle_loop", "get_action_log", "activate_skill":
+        case "undo", "redo", "play_pause", "seek", "toggle_loop", "get_action_log", "activate_skill", "check_trend_context":
             return []
 
         default:

@@ -51,10 +51,19 @@ public actor SupabaseUploader {
             public let sourceEnd: Double
             public let videoSize: Int64
             public let reasoning: String
+            public let distributionScore: Int
+            public let postingPriority: String
+            public let scoreWarnings: [String]
+            public let bestPlatforms: [String]
+            public let scoreBreakdown: [String: Double]
+            public let pipelineGrade: [String: String]
 
             public init(sourceAsset: String, hook: String, label: String, duration: Double,
                         evergreenScore: Int, trendingScore: Int, platformFit: [String],
-                        sourceStart: Double, sourceEnd: Double, videoSize: Int64, reasoning: String) {
+                        sourceStart: Double, sourceEnd: Double, videoSize: Int64, reasoning: String,
+                        distributionScore: Int = 0, postingPriority: String = "review",
+                        scoreWarnings: [String] = [], bestPlatforms: [String] = [],
+                        scoreBreakdown: [String: Double] = [:], pipelineGrade: [String: String] = [:]) {
                 self.sourceAsset = sourceAsset
                 self.hook = hook
                 self.label = label
@@ -66,6 +75,12 @@ public actor SupabaseUploader {
                 self.sourceEnd = sourceEnd
                 self.videoSize = videoSize
                 self.reasoning = reasoning
+                self.distributionScore = distributionScore
+                self.postingPriority = postingPriority
+                self.scoreWarnings = scoreWarnings
+                self.bestPlatforms = bestPlatforms
+                self.scoreBreakdown = scoreBreakdown
+                self.pipelineGrade = pipelineGrade
             }
         }
 
@@ -138,6 +153,12 @@ public actor SupabaseUploader {
                     "thumbnail_path": "shorts-thumbnails/\(thumbObjectPath)",
                     "video_size": artifacts.metadata.videoSize,
                     "reasoning": artifacts.metadata.reasoning,
+                    "distribution_score": artifacts.metadata.distributionScore,
+                    "posting_priority": artifacts.metadata.postingPriority,
+                    "score_warnings": artifacts.metadata.scoreWarnings,
+                    "best_platforms": artifacts.metadata.bestPlatforms,
+                    "score_breakdown": artifacts.metadata.scoreBreakdown,
+                    "pipeline_grade": artifacts.metadata.pipelineGrade,
                 ]
                 let req = try self.client.buildInsertRequest(table: "shorts", body: body)
                 _ = try await self.client.run(req)

@@ -1,7 +1,7 @@
 ---
 name: viral-clip-extractor
 description: Find and create 30-60 second viral clips from long-form video. Uses audio energy analysis + transcript to find genuinely engaging moments (not just good text), creates cold-open hooks, formats for YouTube Shorts/TikTok/Reels. Verifies every output. Use when the user asks about viral clips, hooks, shorts, TikTok, Reels, highlights, best moments, social clips, extract clips, or find moments.
-allowed-tools: analyze_audio_energy get_transcript transcribe_asset search_transcript split_clip trim_clip move_clip delete_clips add_to_timeline set_clip_speed set_clip_effect set_clip_transition rename_clip measure_loudness verify_playback get_state
+allowed-tools: analyze_audio_energy get_transcript transcribe_asset search_transcript check_trend_context find_viral_moments find_broll_opportunities generate_broll_asset start_broll_video_job poll_broll_video_job search_local_broll search_broll import_media insert_broll split_clip trim_clip move_clip delete_clips add_to_timeline set_clip_speed set_clip_effect set_clip_transition rename_clip measure_loudness verify_playback get_state
 ---
 
 # Viral Clip Extractor
@@ -39,9 +39,18 @@ Now read what's being said in those high-energy zones:
    - Specific data: numbers, names, statistics
    - Contrarian views: disagreement, "but actually", against conventional wisdom
 
+### Step 2.5: Trend context for timely topics
+
+If the episode touches a current topic, product, founder, market, policy change, platform shift, or online discourse:
+
+1. Call `check_trend_context` with 1-5 concrete queries from the transcript.
+2. Treat returned `trend_context.signals` as a boost only. A trend match cannot rescue a weak hook, low-energy delivery, unclear setup, or missing payoff.
+3. Pass the returned trend context to `find_viral_moments` as `trend_context` with `max_overlap_ratio: 0.5` so the server uses visual sidecars, score breakdowns, and overlap suppression.
+4. If the tool returns missing credential/setup guidance, continue with evergreen scoring and note that trend evidence was unavailable.
+
 ### Step 3: Score and select the best 3-5 clips
 
-For each candidate moment, combine audio + transcript scoring:
+Prefer `find_viral_moments` for ranked candidates. It returns `scorecard_score`, `score_breakdown`, platform fit, exact timestamps, trend evidence, and duplicate suppression. For each candidate moment, combine audio + transcript scoring:
 
 **Audio score (50% of total):**
 - Engagement score from `analyze_audio_energy` (0-100, normalize to 0-50)
@@ -191,7 +200,23 @@ Vertical formats require an additional tightening pass beyond horizontal content
 - **TikTok:** Tightest pacing—remove all non-essential pauses, constant micro-cuts signal algorithmic relevance
 - **Instagram Reels:** Moderate tightness + high visual priority (images, text, graphics drive pacing as much as audio)
 
-### Step 7: Verify — this is mandatory, not optional
+### Step 7: Add B-roll polish — this is mandatory for modern shorts
+
+After the clip is cut and tightened, run a B-roll pass before verification:
+
+1. Call `find_broll_opportunities` with `platform="shorts"` and the clip/transcribed asset. Use it to find abstract ideas, statistics, explanations, story beats, hard-cut covers, and weak visual sections.
+2. For the top 1-3 opportunities, prefer actual video B-roll:
+   - For generated B-roll, call `start_broll_video_job`, then `poll_broll_video_job` until it returns an imported MP4 `asset_id`.
+   - If OpenRouter credentials are missing, call `search_local_broll` with the opportunity's `search_query`; import a selected local file and call `insert_broll`.
+   - If local search has no match, call `search_broll` with `query=search_query`, `download=true`, `insert_at=timeline_start`, and `duration=1.5-3.0`.
+   - Use `generate_broll_asset` only as a still visual-support fallback. If you insert a still, pass `allow_still_visual_support=true` and do not describe it as actual video B-roll.
+3. Call `insert_broll` with the generated/imported asset, `insert_at=timeline_start`, `duration=1.5-3.0`, and `placement="overlay"` when the fallback did not already insert the clip.
+4. Do not add B-roll over the first face/hook frame unless the B-roll itself is the visual hook. Keep the viewer oriented in the first 1-2 seconds.
+5. Keep B-roll tight. For short-form, 1-3 seconds is the default; avoid long static cutaways.
+
+Generated B-roll prompts should be structured: style/intent, subject, scene, action, camera movement, composition, lighting/tone, format, duration, audio, and constraints. For viral clips, prefer one readable motion idea over a complex story. Require silent video, portrait-safe framing, no captions, no readable text, no real logos, no famous likenesses, and no unsupported claims.
+
+### Step 8: Verify — this is mandatory, not optional
 
 **After every clip is built, run verification:**
 
