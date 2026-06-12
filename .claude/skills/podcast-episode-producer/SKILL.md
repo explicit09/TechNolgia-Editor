@@ -300,13 +300,17 @@ Tadiwa Mbuwayesango — Co-Host · Founder, LEARN-X
 Elvis Kimara — Co-Host · Founder, Throwly
 ```
 
-### Tags & Hashtags
+### YouTube Tags (always CSV, never hashtags)
 
-Add 5-8 relevant tags/hashtags for discoverability:
-- Show name: #technologiatalks
-- Topic keywords: #startups, #entrepreneurship, #productmanagement
-- Episode-specific: #feedback, #validation, #MVP
-- Platform signals: #podcast, #entrepreneurpodcast
+YouTube's *tags field* takes comma-separated values, not hashtags. Always output a `## YouTube Tags (CSV)` section with 10-15 tags as plain phrases separated by commas. No `#` prefix, no `#` concatenation. Multi-word phrases are fine — they help with semantic match.
+
+Categories to cover:
+- Show name: `technologia talks`
+- Topic keywords: `startups`, `entrepreneurship`, `product management`
+- Episode-specific: `feedback`, `validation`, `mvp`
+- Platform signals: `podcast`, `entrepreneur podcast`
+
+Hashtags can still appear *inside the description body* (YouTube renders up to 3 hashtags above the title), but the tags field itself is always CSV.
 
 ### Complete Metadata Example
 
@@ -332,7 +336,8 @@ For founders and product builders working on early-stage ideas.
 Tadiwa Mbuwayesango — Co-Host · Founder, LEARN-X
 Elvis Kimara — Co-Host · Founder, Throwly
 
-#startups #entrepreneurship #productmanagement #validation #technologiatalks
+## YouTube Tags (CSV — paste into tags field)
+technologia talks, startups, entrepreneurship, product management, validation, feedback, mvp, podcast, entrepreneur podcast, founder, building startups, early stage startups
 ```
 
 ### Why This Matters
@@ -347,9 +352,11 @@ YouTube's algorithm prioritizes watch time and click-through rate. A compelling 
 
 **Present this to the user after export. Do not skip this step.**
 
-## Step 8: Generate Thumbnail
+## Step 7: Thumbnail (opt-in — DO NOT generate automatically)
 
-After export, generate a branded thumbnail using `generate_thumbnail`. The default provider is `"local"` — a programmatic renderer that uses real host photos with background removal, perfect text, and brand colors. No AI API calls needed.
+**Do not call `generate_thumbnail` unless the user explicitly asks for a thumbnail.** Thumbnail generation is no longer part of the default flow. The exported MP4 + metadata are the deliverable; thumbnails are a separate step the user invokes by name (e.g. "make a thumbnail" or "generate the YouTube cover").
+
+When the user does ask for one, use `generate_thumbnail`. The default provider is `"local"` — a programmatic renderer that uses real host photos with background removal, perfect text, and brand colors. No AI API calls needed.
 
 ### Brand Identity (Technolgia)
 

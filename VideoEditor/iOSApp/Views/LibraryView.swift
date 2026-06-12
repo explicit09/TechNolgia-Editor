@@ -3,6 +3,7 @@ import SwiftUI
 struct LibraryView: View {
     @Environment(AppState.self) private var appState
     @Namespace private var glassNamespace
+    @State private var selectedEpisodeKey: String = EpisodeGroupKey.all
 
     var body: some View {
         ZStack {
@@ -70,6 +71,7 @@ struct LibraryView: View {
     private var statusStrip: some View {
         HStack(spacing: 10) {
             MetricPill(title: "Shorts", value: "\(appState.liveShorts.count)")
+            MetricPill(title: "Episodes", value: "\(episodeGroups.filter { !$0.key.isEmpty }.count)")
             MetricPill(
                 title: "Total",
                 value: totalDurationLabel
@@ -104,7 +106,7 @@ struct LibraryView: View {
     private var liveSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("Library")
+                Text("Episodes")
                     .font(.title3.weight(.bold))
                     .foregroundStyle(.white)
                 Spacer()
@@ -132,14 +134,23 @@ struct LibraryView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 40)
             } else {
-                groupedShorts
+                episodeContent
             }
         }
     }
 
-    /// Groups shorts by `episode_name`, sorts each group by `episode_order`.
-    /// Nil/empty episodes fall into an "Unassigned" section at the bottom.
-    private var groupedShorts: some View {
+    @ViewBuilder
+    private var episodeContent: some View {
+        if selectedEpisodeKey == EpisodeGroupKey.all {
+            episodeOverview
+        } else if let group = episodeGroups.first(where: { $0.key == selectedEpisodeKey }) {
+            episodeDetail(group)
+        } else {
+            episodeOverview
+        }
+    }
+
+    private var episodeGroups: [EpisodeGroup] {
         let groups = Dictionary(grouping: appState.liveShorts) { short -> String in
             let n = (short.episodeName ?? "").trimmingCharacters(in: .whitespaces)
             return n.isEmpty ? "" : n
@@ -149,39 +160,147 @@ struct LibraryView: View {
             if b.isEmpty && !a.isEmpty { return true }
             return a < b
         }
-        return VStack(alignment: .leading, spacing: 24) {
-            ForEach(keys, id: \.self) { key in
-                let shorts = (groups[key] ?? []).sorted { l, r in
-                    switch (l.episodeOrder, r.episodeOrder) {
-                    case let (.some(a), .some(b)): return a < b
-                    case (.some, .none): return true
-                    case (.none, .some): return false
-                    default: return l.createdAt > r.createdAt
-                    }
+        return keys.map { key in
+            let shorts = (groups[key] ?? []).sorted { l, r in
+                switch (l.episodeOrder, r.episodeOrder) {
+                case let (.some(a), .some(b)): return a < b
+                case (.some, .none): return true
+                case (.none, .some): return false
+                default: return l.createdAt > r.createdAt
                 }
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Text(key.isEmpty ? "Unassigned" : key)
-                            .font(.subheadline.weight(.bold))
-                            .foregroundStyle(.white.opacity(0.9))
-                        Text("· \(shorts.count)")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.white.opacity(0.55))
-                        Spacer()
+            }
+            return EpisodeGroup(key: key, shorts: shorts)
+        }
+    }
+
+    private var episodeOverview: some View {
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
+            ForEach(episodeGroups) { group in
+                Button {
+                    selectedEpisodeKey = group.key
+                } label: {
+                    EpisodeFolderCard(group: group)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func episodeDetail(_ group: EpisodeGroup) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Button {
+                    selectedEpisodeKey = EpisodeGroupKey.all
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.caption.weight(.bold))
+                        .frame(width: 30, height: 30)
+                        .background(Color.white.opacity(0.1), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(group.title)
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(.white)
+                    Text("\(group.shorts.count) shorts · \(group.durationLabel)")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.white.opacity(0.65))
+                }
+
+                Spacer()
+            }
+
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
+                ForEach(group.shorts) { short in
+                    NavigationLink {
+                        DetailView(short: short)
+                    } label: {
+                        LiveShortCard(short: short)
                     }
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
-                        ForEach(shorts) { short in
-                            NavigationLink {
-                                DetailView(short: short)
-                            } label: {
-                                LiveShortCard(short: short)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
+                    .buttonStyle(.plain)
                 }
             }
         }
+    }
+}
+
+private enum EpisodeGroupKey {
+    static let all = "__all__"
+}
+
+private struct EpisodeGroup: Identifiable {
+    let key: String
+    let shorts: [Short]
+
+    var id: String { key }
+    var title: String { key.isEmpty ? "Unassigned" : key }
+    var durationLabel: String {
+        Self.durationLabel(shorts.reduce(0) { $0 + $1.duration })
+    }
+
+    var latestShort: Short? {
+        shorts.max { $0.createdAt < $1.createdAt }
+    }
+
+    private static func durationLabel(_ seconds: Double) -> String {
+        let total = Int(seconds.rounded())
+        if total < 60 { return "\(total)s" }
+        let minutes = total / 60
+        let remaining = total % 60
+        return remaining == 0 ? "\(minutes)m" : "\(minutes)m \(remaining)s"
+    }
+}
+
+private struct EpisodeFolderCard: View {
+    let group: EpisodeGroup
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                Image(systemName: group.key.isEmpty ? "tray.fill" : "rectangle.stack.fill")
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(Color(red: 201 / 255, green: 160 / 255, blue: 40 / 255))
+
+                Spacer()
+
+                Text("\(group.shorts.count)")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.white.opacity(0.82))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.white.opacity(0.1), in: Capsule())
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(group.title)
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+
+                Text(group.durationLabel)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.white.opacity(0.65))
+            }
+
+            Spacer(minLength: 0)
+
+            if let latest = group.latestShort {
+                Text(latest.label)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.58))
+                    .lineLimit(2)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 148, alignment: .leading)
+        .padding(14)
+        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
     }
 }
 

@@ -13,11 +13,14 @@ public struct PendingUpload: Codable, Sendable, Equatable {
     public let trendingScore: Int
     public let platformFit: [String]
     public let reasoning: String
+    public let episodeName: String?
+    public let episodeOrder: Int?
 
     public init(
         shortID: UUID, videoLocalPath: String, label: String, hook: String,
         sourceAssetName: String, sourceStart: Double, sourceEnd: Double,
-        evergreenScore: Int, trendingScore: Int, platformFit: [String], reasoning: String
+        evergreenScore: Int, trendingScore: Int, platformFit: [String], reasoning: String,
+        episodeName: String? = nil, episodeOrder: Int? = nil
     ) {
         self.shortID = shortID
         self.videoLocalPath = videoLocalPath
@@ -30,6 +33,8 @@ public struct PendingUpload: Codable, Sendable, Equatable {
         self.trendingScore = trendingScore
         self.platformFit = platformFit
         self.reasoning = reasoning
+        self.episodeName = episodeName
+        self.episodeOrder = episodeOrder
     }
 }
 

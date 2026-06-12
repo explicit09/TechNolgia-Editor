@@ -490,6 +490,8 @@ final class MCPServer {
                         "pipeline_grade": ["type": "object", "description": "Full pipeline grade emitted by find_viral_moments"],
                         "reasoning": ["type": "string"],
                         "source_asset_name": ["type": "string"],
+                        "episode_name": ["type": "string", "description": "Episode or podcast title used to group uploaded shorts in the phone app"],
+                        "episode_order": ["type": "number", "description": "Publishing/order position within the episode group"],
                     ], "required": ["asset_id", "source_start", "source_end", "video_path", "label", "hook"]],
                 ],
                 [
@@ -4310,6 +4312,11 @@ final class MCPServer {
         let platformFit = normalizedStringArray(args["platform_fit"])
         let reasoning = (args["reasoning"] as? String) ?? ""
         let sourceAssetName = (args["source_asset_name"] as? String) ?? asset.name
+        let rawEpisodeName = (args["episode_name"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let episodeName = rawEpisodeName?.isEmpty == true ? nil : rawEpisodeName
+        let episodeOrder = (args["episode_order"] as? Int)
+            ?? (args["episode_order"] as? Double).map { Int($0) }
         let clampedEvergreen = min(max(evergreen, 0), 10)
         let clampedTrending = min(max(trending, 0), 10)
         let weightedScore = (Double(clampedEvergreen) * 0.45 + Double(clampedTrending) * 0.55) * 10
@@ -4439,6 +4446,8 @@ final class MCPServer {
                 platformFit: platformFit,
                 sourceStart: sourceStart, sourceEnd: sourceEnd,
                 videoSize: videoSize, reasoning: reasoning,
+                episodeName: episodeName,
+                episodeOrder: episodeOrder,
                 distributionScore: distributionScore,
                 postingPriority: postingPriority,
                 scoreWarnings: scoreWarnings,
@@ -4460,7 +4469,9 @@ final class MCPServer {
                 label: label, hook: hook, sourceAssetName: sourceAssetName,
                 sourceStart: sourceStart, sourceEnd: sourceEnd,
                 evergreenScore: evergreen, trendingScore: trending,
-                platformFit: platformFit, reasoning: reasoning
+                platformFit: platformFit, reasoning: reasoning,
+                episodeName: episodeName,
+                episodeOrder: episodeOrder
             )
             try? PendingUploadsQueue.defaultQueue().append(pending)
             return "Error: Upload failed — \(error.localizedDescription). Queued for retry."

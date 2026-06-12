@@ -119,8 +119,8 @@ public struct OverlayStyle: Codable, Sendable, Equatable {
 
     // Title card timing
     public var titleFadeInEnd: TimeInterval      // 1.5s — title fully visible
-    public var titleFadeOutStart: TimeInterval    // 29.0s — title starts fading
-    public var titleVisibleEnd: TimeInterval      // 30.0s — title fully gone
+    public var titleFadeOutStart: TimeInterval    // 4.0s — title starts fading
+    public var titleVisibleEnd: TimeInterval      // 5.0s — title fully gone
 
     // Host intro strip timing
     public var hostIntroStart: TimeInterval       // 38.0s — gold strip slides in
@@ -145,8 +145,8 @@ public struct OverlayStyle: Codable, Sendable, Equatable {
         cyanHex: String = "#22D3EE",
         darkNavyHex: String = "#070D17",
         titleFadeInEnd: TimeInterval = 1.5,
-        titleFadeOutStart: TimeInterval = 29.0,
-        titleVisibleEnd: TimeInterval = 30.0,
+        titleFadeOutStart: TimeInterval = 4.0,
+        titleVisibleEnd: TimeInterval = 5.0,
         hostIntroStart: TimeInterval = 38.0,
         hostIntroEnd: TimeInterval = 92.0,
         tickerSponsorDuration: TimeInterval = 25.0,

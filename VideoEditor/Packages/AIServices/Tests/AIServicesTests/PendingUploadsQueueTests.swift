@@ -21,13 +21,17 @@ struct PendingUploadsQueueTests {
             evergreenScore: 8,
             trendingScore: 5,
             platformFit: ["youtube_shorts"],
-            reasoning: "r"
+            reasoning: "r",
+            episodeName: "Episode 42",
+            episodeOrder: 2
         )
         try queue.append(entry)
         let loaded = try queue.load()
         #expect(loaded.count == 1)
         #expect(loaded[0].shortID == entry.shortID)
         #expect(loaded[0].label == "Label")
+        #expect(loaded[0].episodeName == "Episode 42")
+        #expect(loaded[0].episodeOrder == 2)
     }
 
     @Test("append on corrupt file preserves original and writes fresh entry")

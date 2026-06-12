@@ -51,6 +51,8 @@ public actor SupabaseUploader {
             public let sourceEnd: Double
             public let videoSize: Int64
             public let reasoning: String
+            public let episodeName: String?
+            public let episodeOrder: Int?
             public let distributionScore: Int
             public let postingPriority: String
             public let scoreWarnings: [String]
@@ -61,6 +63,7 @@ public actor SupabaseUploader {
             public init(sourceAsset: String, hook: String, label: String, duration: Double,
                         evergreenScore: Int, trendingScore: Int, platformFit: [String],
                         sourceStart: Double, sourceEnd: Double, videoSize: Int64, reasoning: String,
+                        episodeName: String? = nil, episodeOrder: Int? = nil,
                         distributionScore: Int = 0, postingPriority: String = "review",
                         scoreWarnings: [String] = [], bestPlatforms: [String] = [],
                         scoreBreakdown: [String: Double] = [:], pipelineGrade: [String: String] = [:]) {
@@ -75,6 +78,8 @@ public actor SupabaseUploader {
                 self.sourceEnd = sourceEnd
                 self.videoSize = videoSize
                 self.reasoning = reasoning
+                self.episodeName = episodeName
+                self.episodeOrder = episodeOrder
                 self.distributionScore = distributionScore
                 self.postingPriority = postingPriority
                 self.scoreWarnings = scoreWarnings
@@ -153,6 +158,8 @@ public actor SupabaseUploader {
                     "thumbnail_path": "shorts-thumbnails/\(thumbObjectPath)",
                     "video_size": artifacts.metadata.videoSize,
                     "reasoning": artifacts.metadata.reasoning,
+                    "episode_name": artifacts.metadata.episodeName as Any? ?? NSNull(),
+                    "episode_order": artifacts.metadata.episodeOrder as Any? ?? NSNull(),
                     "distribution_score": artifacts.metadata.distributionScore,
                     "posting_priority": artifacts.metadata.postingPriority,
                     "score_warnings": artifacts.metadata.scoreWarnings,
