@@ -36,6 +36,8 @@ targets:
       path: Info.plist
       properties:
         CFBundleDisplayName: TechNolgia
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         UIApplicationSupportsIndirectInputEvents: true
         NSPhotoLibraryAddUsageDescription: "Save shorts to Photos for sharing"
         CFBundleURLTypes:
@@ -62,7 +64,7 @@ targets:
         DEVELOPMENT_TEAM: 5986DKD528
         CODE_SIGN_STYLE: Automatic
         MARKETING_VERSION: "1.0.0"
-        CURRENT_PROJECT_VERSION: "3"
+        CURRENT_PROJECT_VERSION: "4"
   ShortsDistributionTests:
     type: bundle.unit-test
     supportedDestinations: [iOS Simulator]
