@@ -8,7 +8,7 @@
 Aider uses various "edit formats" to let LLMs edit source files.
 Different models work better or worse with different edit formats.
 Aider is configured to use the optimal format for most popular, common models.
-You can always force use of a specific edit format with 
+You can always force use of a specific edit format with
 the `--edit-format` switch.
 
 ## whole
@@ -47,12 +47,12 @@ with the file path right before a fenced block:
 ````
 mathweb/flask/app.py
 ```
-<<<<<<< SEARCH
+&lt;&lt;&lt;&lt;&lt;&lt;&lt; SEARCH
 from flask import Flask
-=======
+[separator]
 import math
 from flask import Flask
->>>>>>> REPLACE
+&gt;&gt;&gt;&gt;&gt;&gt;&gt; REPLACE
 ```
 ````
 
@@ -66,12 +66,12 @@ which often fail to conform to the fencing approach specified in the diff format
 ````
 ```
 mathweb/flask/app.py
-<<<<<<< SEARCH
+&lt;&lt;&lt;&lt;&lt;&lt;&lt; SEARCH
 from flask import Flask
-=======
+[separator]
 import math
 from flask import Flask
->>>>>>> REPLACE
+&gt;&gt;&gt;&gt;&gt;&gt;&gt; REPLACE
 ```
 ````
 

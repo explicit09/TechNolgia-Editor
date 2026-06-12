@@ -4,14 +4,14 @@
 **Captured:** 2026-05-02
 
 > ## Documentation Index
-> 
+>
 > Fetch the complete documentation index at: <https://code.claude.com/docs/llms.txt>
-> 
+>
 > Use this file to discover all available pages before exploring further.
 
 Claude Code is an AI-powered coding assistant that helps you build features, fix bugs, and automate development tasks. It understands your entire codebase and can work across multiple files and tools to get things done.
 
-## 
+##
 
 ​
 
@@ -38,47 +38,47 @@ The full-featured CLI for working with Claude Code directly in your terminal. Ed
   * WinGet
 
 **macOS, Linux, WSL:**
-    
-    
+
+
      curl -fsSL https://claude.ai/install.sh | bash
-    
+
 
 **Windows PowerShell:**
-    
-    
+
+
      irm https://claude.ai/install.ps1 | iex
-    
+
 
 **Windows CMD:**
-    
-    
+
+
      curl -fsSL https://claude.ai/install.cmd -o install.cmd && install.cmd && del install.cmd
-    
+
 
 If you see `The token '&&' is not a valid statement separator`, you’re in PowerShell, not CMD. If you see `'irm' is not recognized as an internal or external command`, you’re in CMD, not PowerShell. Your prompt shows `PS C:\` when you’re in PowerShell and `C:\` without the `PS` when you’re in CMD.[Git for Windows](<https://git-scm.com/downloads/win>) is recommended on native Windows so Claude Code can use the Bash tool. If Git for Windows is not installed, Claude Code uses PowerShell as the shell tool instead. WSL setups do not need Git for Windows.
 
 Native installations automatically update in the background to keep you on the latest version.
-    
-    
+
+
     brew install --cask claude-code
-    
+
 
 Homebrew offers two casks. `claude-code` tracks the stable release channel, which is typically about a week behind and skips releases with major regressions. `claude-code@latest` tracks the latest channel and receives new versions as soon as they ship.
 
 Homebrew installations do not auto-update. Run `brew upgrade claude-code` or `brew upgrade claude-code@latest`, depending on which cask you installed, to get the latest features and security fixes.
-    
-    
+
+
     winget install Anthropic.ClaudeCode
-    
+
 
 WinGet installations do not auto-update. Run `winget upgrade Anthropic.ClaudeCode` periodically to get the latest features and security fixes.
 
 You can also install with [apt, dnf, or apk](</docs/en/setup#install-with-linux-package-managers>) on Debian, Fedora, RHEL, and Alpine.Then start Claude Code in any project:
-    
-    
+
+
     cd your-project
     claude
-    
+
 
 You’ll be prompted to log in on first use. That’s it! [Continue with the Quickstart →](</docs/en/quickstart>)
 
@@ -103,7 +103,7 @@ Run Claude Code in your browser with no local setup. Kick off long-running tasks
 
 A plugin for IntelliJ IDEA, PyCharm, WebStorm, and other JetBrains IDEs with interactive diff viewing and selection context sharing.Install the [Claude Code plugin](<https://plugins.jetbrains.com/plugin/27310-claude-code-beta->) from the JetBrains Marketplace and restart your IDE.[Get started with JetBrains →](</docs/en/jetbrains>)
 
-## 
+##
 
 ​
 
@@ -114,10 +114,10 @@ Here are some of the ways you can use Claude Code:
 Automate the work you keep putting off
 
 Claude Code handles the tedious tasks that eat up your day: writing tests for untested code, fixing lint errors across a project, resolving merge conflicts, updating dependencies, and writing release notes.
-    
-    
+
+
     claude "write tests for the auth module, run them, and fix any failures"
-    
+
 
 Build features and fix bugs
 
@@ -126,10 +126,10 @@ Describe what you want in plain language. Claude Code plans the approach, writes
 Create commits and pull requests
 
 Claude Code works directly with git. It stages changes, writes commit messages, creates branches, and opens pull requests.
-    
-    
+
+
     claude "commit my changes with a descriptive message"
-    
+
 
 In CI, you can automate code review and issue triage with [GitHub Actions](</docs/en/github-actions>) or [GitLab CI/CD](</docs/en/gitlab-ci-cd>).
 
@@ -148,17 +148,17 @@ Spawn [multiple Claude Code agents](</docs/en/sub-agents>) that work on differen
 Pipe, script, and automate with the CLI
 
 Claude Code is composable and follows the Unix philosophy. Pipe logs into it, run it in CI, or chain it with other tools:
-    
-    
+
+
     # Analyze recent log output
     tail -200 app.log | claude -p "Slack me if you see any anomalies"
-    
+
     # Automate translations in CI
     claude -p "translate new strings into French and raise a PR for review"
-    
+
     # Bulk operations across files
     git diff main --name-only | claude -p "review these changed files for security issues"
-    
+
 
 See the [CLI reference](</docs/en/cli-reference>) for the full set of commands and flags.
 
@@ -180,7 +180,7 @@ Sessions aren’t tied to a single surface. Move work between environments as yo
   * Hand off a terminal session to the [Desktop app](</docs/en/desktop>) with `/desktop` for visual diff review
   * Route tasks from team chat: mention `@Claude` in [Slack](</docs/en/slack>) with a bug report and get a pull request back
 
-## 
+##
 
 ​
 
@@ -188,19 +188,19 @@ Use Claude Code everywhere
 
 Each surface connects to the same underlying Claude Code engine, so your CLAUDE.md files, settings, and MCP servers work across all of them. Beyond the [Terminal](</docs/en/quickstart>), [VS Code](</docs/en/vs-code>), [JetBrains](</docs/en/jetbrains>), [Desktop](</docs/en/desktop>), and [Web](</docs/en/claude-code-on-the-web>) environments above, Claude Code integrates with CI/CD, chat, and browser workflows:
 
-I want to…| Best option  
----|---  
-Continue a local session from my phone or another device| [Remote Control](</docs/en/remote-control>)  
-Push events from Telegram, Discord, iMessage, or my own webhooks into a session| [Channels](</docs/en/channels>)  
-Start a task locally, continue on mobile| [Web](</docs/en/claude-code-on-the-web>) or [Claude iOS app](<https://apps.apple.com/app/claude-by-anthropic/id6473753684>)  
-Run Claude on a recurring schedule| [Routines](</docs/en/routines>) or [Desktop scheduled tasks](</docs/en/desktop-scheduled-tasks>)  
-Automate PR reviews and issue triage| [GitHub Actions](</docs/en/github-actions>) or [GitLab CI/CD](</docs/en/gitlab-ci-cd>)  
-Get automatic code review on every PR| [GitHub Code Review](</docs/en/code-review>)  
-Route bug reports from Slack to pull requests| [Slack](</docs/en/slack>)  
-Debug live web applications| [Chrome](</docs/en/chrome>)  
-Build custom agents for your own workflows| [Agent SDK](</docs/en/agent-sdk/overview>)  
-  
-## 
+I want to…| Best option
+---|---
+Continue a local session from my phone or another device| [Remote Control](</docs/en/remote-control>)
+Push events from Telegram, Discord, iMessage, or my own webhooks into a session| [Channels](</docs/en/channels>)
+Start a task locally, continue on mobile| [Web](</docs/en/claude-code-on-the-web>) or [Claude iOS app](<https://apps.apple.com/app/claude-by-anthropic/id6473753684>)
+Run Claude on a recurring schedule| [Routines](</docs/en/routines>) or [Desktop scheduled tasks](</docs/en/desktop-scheduled-tasks>)
+Automate PR reviews and issue triage| [GitHub Actions](</docs/en/github-actions>) or [GitLab CI/CD](</docs/en/gitlab-ci-cd>)
+Get automatic code review on every PR| [GitHub Code Review](</docs/en/code-review>)
+Route bug reports from Slack to pull requests| [Slack](</docs/en/slack>)
+Debug live web applications| [Chrome](</docs/en/chrome>)
+Build custom agents for your own workflows| [Agent SDK](</docs/en/agent-sdk/overview>)
+
+##
 
 ​
 

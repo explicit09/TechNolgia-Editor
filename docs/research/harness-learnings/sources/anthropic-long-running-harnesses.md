@@ -28,15 +28,15 @@ When experimenting internally, we addressed these problems using a two-part solu
 
 The key insight here was finding a way for agents to quickly understand the state of work when starting with a fresh context window, which is accomplished with the claude-progress.txt file alongside the git history. Inspiration for these practices came from knowing what effective software engineers do every day.
 
-## Environment management 
+## Environment management
 
 In the updated [Claude 4 prompting guide](<https://docs.claude.com/en/docs/build-with-claude/prompt-engineering/claude-4-best-practices#multi-context-window-workflows>), we shared some best practices for multi-context window workflows, including a harness structure that uses “a different prompt for the very first context window.” This “different prompt” requests that the initializer agent set up the environment with all the necessary context that future coding agents will need to work effectively. Here, we provide a deeper dive on some of the key components of such an environment.
 
 ### Feature list
 
 To address the problem of the agent one-shotting an app or prematurely considering the project complete, we prompted the initializer agent to write a comprehensive file of feature requirements expanding on the user’s initial prompt. In the [claude.ai](<http://claude.ai/redirect/website.v1.35313a87-e070-4708-9449-807764f1cf34>) clone example, this meant over 200 features, such as “a user can open a new chat, type in a query, press enter, and see an AI response.” These features were all initially marked as “failing” so that later coding agents would have a clear outline of what full functionality looked like.
-    
-    
+
+
     {
         "category": "functional",
         "description": "New chat button creates a fresh conversation",
@@ -49,7 +49,7 @@ To address the problem of the agent one-shotting an app or prematurely consideri
         ],
         "passes": false
       }
-    
+
 
 We prompt coding agents to edit this file only by changing the status of a passes field, and we use strongly-worded instructions like “It is unacceptable to remove or edit tests because this could lead to missing or buggy functionality.” After some experimentation, we landed on using JSON for this, as the model is less likely to inappropriately change or overwrite JSON files compared to Markdown files.
 
@@ -65,9 +65,9 @@ These approaches also increased efficiency, as they eliminated the need for an a
 
 One final major failure mode that we observed was Claude’s tendency to mark a feature as complete without proper testing. Absent explicit prompting, Claude tended to make code changes, and even do testing with unit tests or `curl` commands against a development server, but would fail recognize that the feature didn’t work end-to-end.
 
-In the case of building a web app, Claude mostly did well at verifying features end-to-end once explicitly prompted to use browser automation tools and do all testing as a human user would. 
+In the case of building a web app, Claude mostly did well at verifying features end-to-end once explicitly prompted to use browser automation tools and do all testing as a human user would.
 
-![ Screenshots taken by Claude through the Puppeteer MCP server as it tested the claude.ai clone. ](/_next/image?url=https%3A%2F%2Fwww-cdn.anthropic.com%2Fimages%2F4zrzovbb%2Fwebsite%2Ff94c2257964fb2d623f1e81f874977ebfc0986bc-1920x1080.gif&w=3840&q=75)Screenshots taken by Claude through the Puppeteer MCP server as it tested the claude.ai clone.   
+![ Screenshots taken by Claude through the Puppeteer MCP server as it tested the claude.ai clone. ](/_next/image?url=https%3A%2F%2Fwww-cdn.anthropic.com%2Fimages%2F4zrzovbb%2Fwebsite%2Ff94c2257964fb2d623f1e81f874977ebfc0986bc-1920x1080.gif&w=3840&q=75)Screenshots taken by Claude through the Puppeteer MCP server as it tested the claude.ai clone.
 
 Providing Claude with these kinds of testing tools dramatically improved performance, as the agent was able to identify and fix bugs that weren’t obvious from the code alone.
 
@@ -86,8 +86,8 @@ This approach saves Claude some tokens in every session since it doesn’t have 
 In the case of the claude.ai clone, this meant that the agent always started the local development server and used the Puppeteer MCP to start a new chat, send a message, and receive a response. This ensured that Claude could quickly identify if the app had been left in a broken state, and immediately fix any existing bugs. If the agent had instead started implementing a new feature, it would likely make the problem worse.
 
 Given all this, a typical session starts off with the following assistant messages:
-    
-    
+
+
     [Assistant] I'll start by getting my bearings and understanding the current state of the project.
     [Tool Use] <bash - pwd>
     [Tool Use] <read - claude-progress.txt>
@@ -101,15 +101,15 @@ Given all this, a typical session starts off with the following assistant messag
     [Assistant] Based on my verification testing, I can see that the fundamental functionality is working well. The core chat features, theme switching, conversation loading, and error handling are all functioning correctly. Now let me review the tests.json file more comprehensively to understand what needs to be implemented next.
     <Starts work on a new feature>
 
-Agent failure modes and solutions 
+Agent failure modes and solutions
 
-**Problem**| **Initializer Agent Behavior**| **Coding Agent Behavior**  
----|---|---  
-Claude declares victory on the entire project too early.| Set up a feature list file: based on the input spec, set up a structured JSON file with a list of end-to-end feature descriptions.| Read the feature list file at the beginning of a session. Choose a single feature to start working on.  
-Claude leaves the environment in a state with bugs or undocumented progress.| An initial git repo and progress notes file is written.| Start the session by reading the progress notes file and git commit logs, and run a basic test on the development server to catch any undocumented bugs. End the session by writing a git commit and progress update.  
-Claude marks features as done prematurely.| Set up a feature list file.| Self-verify all features. Only mark features as “passing” after careful testing.  
-Claude has to spend time figuring out how to run the app.| Write an `init.sh` script that can run the development server.| Start the session by reading `init.sh`.  
-  
+**Problem**| **Initializer Agent Behavior**| **Coding Agent Behavior**
+---|---|---
+Claude declares victory on the entire project too early.| Set up a feature list file: based on the input spec, set up a structured JSON file with a list of end-to-end feature descriptions.| Read the feature list file at the beginning of a session. Choose a single feature to start working on.
+Claude leaves the environment in a state with bugs or undocumented progress.| An initial git repo and progress notes file is written.| Start the session by reading the progress notes file and git commit logs, and run a basic test on the development server to catch any undocumented bugs. End the session by writing a git commit and progress update.
+Claude marks features as done prematurely.| Set up a feature list file.| Self-verify all features. Only mark features as “passing” after careful testing.
+Claude has to spend time figuring out how to run the app.| Write an `init.sh` script that can run the development server.| Start the session by reading `init.sh`.
+
 Summarizing four common failure modes and solutions in long-running AI agents.
 
 ## Future work

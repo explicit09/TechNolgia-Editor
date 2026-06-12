@@ -11,7 +11,7 @@ This led us to create [**Agent Skills**](<https://www.anthropic.com/news/skills>
 
 Building a skill for an agent is like putting together an onboarding guide for a new hire. Instead of building fragmented, custom-designed agents for each use case, anyone can now specialize their agents with composable capabilities by capturing and sharing their procedural knowledge. In this article, we explain what Skills are, show how they work, and share best practices for building your own.
 
-![To activate skills, all you need to do is write a SKILL.md file with custom guidance for your agent.](/_next/image?url=https%3A%2F%2Fwww-cdn.anthropic.com%2Fimages%2F4zrzovbb%2Fwebsite%2Fddd7e6e572ad0b6a943cacefe957248455f6d522-1650x929.jpg&w=3840&q=75)A skill is a directory containing a SKILL.md file that contains organized folders of instructions, scripts, and resources that give agents additional capabilities. 
+![To activate skills, all you need to do is write a SKILL.md file with custom guidance for your agent.](/_next/image?url=https%3A%2F%2Fwww-cdn.anthropic.com%2Fimages%2F4zrzovbb%2Fwebsite%2Fddd7e6e572ad0b6a943cacefe957248455f6d522-1650x929.jpg&w=3840&q=75)A skill is a directory containing a SKILL.md file that contains organized folders of instructions, scripts, and resources that give agents additional capabilities.
 
 ## The anatomy of a skill
 
@@ -39,7 +39,7 @@ Agents with a filesystem and code execution tools don’t need to read the entir
 
 The following diagram shows how the context window changes when a skill is triggered by a user’s message.
 
-![This image depicts how skills are triggered in your context window.](/_next/image?url=https%3A%2F%2Fwww-cdn.anthropic.com%2Fimages%2F4zrzovbb%2Fwebsite%2F441b9f6cc0d2337913c1f41b05357f16f51f702e-1650x929.jpg&w=3840&q=75)Skills are triggered in the context window via your system prompt. 
+![This image depicts how skills are triggered in your context window.](/_next/image?url=https%3A%2F%2Fwww-cdn.anthropic.com%2Fimages%2F4zrzovbb%2Fwebsite%2F441b9f6cc0d2337913c1f41b05357f16f51f702e-1650x929.jpg&w=3840&q=75)Skills are triggered in the context window via your system prompt.
 
 The sequence of operations shown:
 
@@ -81,7 +81,7 @@ In the coming weeks, we’ll continue to add features that support the full life
 
 Looking further ahead, we hope to enable agents to create, edit, and evaluate Skills on their own, letting them codify their own patterns of behavior into reusable capabilities.
 
-Skills are a simple concept with a correspondingly simple format. This simplicity makes it easier for organizations, developers, and end users to build customized agents and give them new capabilities. 
+Skills are a simple concept with a correspondingly simple format. This simplicity makes it easier for organizations, developers, and end users to build customized agents and give them new capabilities.
 
 We’re excited to see what people build with Skills. Get started today by checking out our Skills [docs](<https://docs.claude.com/en/docs/agents-and-tools/agent-skills/overview>) and [cookbook](<https://github.com/anthropics/claude-cookbooks/tree/main/skills>).
 

@@ -13,7 +13,7 @@ Aider has a few different chat modes:
 - `help` - Aider will answer questions about aider: usage, configuration, troubleshooting, etc.
 
 By default, aider starts in "code" mode. As you are talking, you can
-send individual messages in a specific mode using 
+send individual messages in a specific mode using
 `/code`, `/architect`, `/ask`, and `/help` commands:
 Using these `/`-commands applies just to that particular message.
 Your next message will go back to the active mode (usually "code" mode by default).
@@ -63,7 +63,7 @@ You can be very terse when you finally switch from ask to code mode.
 Saying something as simple as "go ahead" in code mode will
 have aider execute on the plan you've been discussing.
 
-Here's an example with two ask mode messages to agree on the plan, 
+Here's an example with two ask mode messages to agree on the plan,
 followed by two terse code mode messages to edit the code.
 
 ````
@@ -87,20 +87,20 @@ popular phrase to use for small demo programs.
 > do 4
 
 hello.py
->>>>>>> SEARCH
-=======
+&gt;&gt;&gt;&gt;&gt;&gt;&gt; SEARCH
+[separator]
 def main():
     print("I think, therefore I print.")
-<<<<<<< REPLACE
+&lt;&lt;&lt;&lt;&lt;&lt;&lt; REPLACE
 
 > ALL CAPS!
 
 hello.py
->>>>>>> SEARCH
+&gt;&gt;&gt;&gt;&gt;&gt;&gt; SEARCH
     print("I think, therefore I print.")
-=======
+[separator]
     print("I THINK, THEREFORE I PRINT!")
-<<<<<<< REPLACE
+&lt;&lt;&lt;&lt;&lt;&lt;&lt; REPLACE
 
 ````
 
@@ -142,10 +142,10 @@ The editor model uses one of aider's edit formats to let the LLM
 edit source files.
 Aider will pick a suitable edit format by default,
 but you can customize it with `--editor-edit-format <format>`.
-The 
+The
 ["editor-diff" and "editor-whole" edit formats](/docs/more/edit-formats.html#editor-diff-and-editor-whole)
 are the recommended edit formats when using architect mode.
-See this article on 
+See this article on
 [aider's architect/editor mode](/2024/09/26/architect.html)
 for more details.
 
@@ -155,11 +155,11 @@ for more details.
 <div class="chat-transcript" markdown="1">
 
 
-> Aider v0.47.1-dev  
-> Models: claude-3-5-sonnet-20240620 with diff edit format  
-> Git repo: .git with 298 files  
-> Repo-map: using 1024 tokens  
-> Use /help to see in-chat commands, run with --help to see cmd line args  
+> Aider v0.47.1-dev
+> Models: claude-3-5-sonnet-20240620 with diff edit format
+> Git repo: .git with 298 files
+> Repo-map: using 1024 tokens
+> Use /help to see in-chat commands, run with --help to see cmd line args
 
 #### /ask What is this repo?
 
@@ -190,20 +190,20 @@ This function uses recursion to calculate the factorial. It's been added to your
 #### /architect Can we make this simpler?
 
 Yes, you could replace the `factorial()` function with a call to the `math.factorial()`
-builtin. 
+builtin.
 This way you don't have to maintain a custom factorial implementation,
 and the builtin function is well optimized.
 
 ```python
-<<<<<<< SEARCH
+&lt;&lt;&lt;&lt;&lt;&lt;&lt; SEARCH
 def factorial(n):
     if n == 0 or n == 1:
         return 1
     else:
         return n * factorial(n - 1)
-=======
+[separator]
 from math import factorial
->>>>>>> REPLACE
+&gt;&gt;&gt;&gt;&gt;&gt;&gt; REPLACE
 ```
 
 </div>

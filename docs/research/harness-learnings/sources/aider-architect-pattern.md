@@ -56,7 +56,7 @@ models, compared to their previous "solo" baseline scores (striped bars).
   .responsive-table td:last-child {
     border-right: 1px solid #ddd;
   }
-  
+
   @media screen and (max-width: 600px) {
     .responsive-table {
       font-size: 12px;
@@ -80,7 +80,7 @@ models, compared to their previous "solo" baseline scores (striped bars).
 <script>
   document.addEventListener("DOMContentLoaded", function() {
     var ctx = document.getElementById('passRateChart').getContext('2d');
-    
+
     // Function to determine aspect ratio and base font size based on screen width
     function getChartSettings() {
       if (window.innerWidth < 600) {
@@ -122,7 +122,7 @@ models, compared to their previous "solo" baseline scores (striped bars).
       {% for item in group.items %}
         if ("{{ item.editor_model }}" == "") {
           labels.push("Baseline");
-        } else {       
+        } else {
           labels.push("{{ item.editor_model }}/{{ item.editor_edit_format | default: item.edit_format }}");
         }
         data.push({{ item.pass_rate_2 }});
@@ -155,7 +155,7 @@ models, compared to their previous "solo" baseline scores (striped bars).
         maintainAspectRatio: true,
         aspectRatio: chartSettings.aspectRatio,
         scales: {
-          y: { 
+          y: {
             beginAtZero: true,
             title: {
               display: true,
@@ -251,7 +251,7 @@ models, compared to their previous "solo" baseline scores (striped bars).
       var newSettings = getChartSettings();
       chart.options.aspectRatio = newSettings.aspectRatio;
       baseFontSize = newSettings.baseFontSize;
-      
+
       // Update font sizes
       chart.options.scales.y.title.font.size = baseFontSize + 6;
       chart.options.scales.y.ticks.font.size = baseFontSize;
@@ -260,7 +260,7 @@ models, compared to their previous "solo" baseline scores (striped bars).
       chart.options.plugins.annotation.annotations.line1.label.font.size = baseFontSize;
       chart.options.plugins.legend.title.font.size = baseFontSize + 4;
       chart.options.plugins.legend.labels.font.size = baseFontSize + 4;
-      
+
       chart.update();
     });
   });
@@ -295,7 +295,7 @@ This second Editor LLM can then interpret the solution description and
 produce the code editing instructions needed to update
 the existing source code.
 
-This approach has recently become attractive for aider due to 
+This approach has recently become attractive for aider due to
 rapid improvements in the speed and costs of frontier models.
 In particular, chaining older LLMs would have been quite slow and
 incompatible with aider's goal of providing an interactive,
@@ -304,14 +304,14 @@ pair programming AI coding experience.
 ## Code reasoning and code editing
 
 Normally aider asks the model to solve a coding problem in one prompt,
-asking the LLM to explain the solution and return 
+asking the LLM to explain the solution and return
 a well formatted series of file edits.
 All of [aider's editing formats](/docs/more/edit-formats.html)
 require the LLM to return source code edits in a specific text
 format, so that aider can process the edits and apply them to the local source files.
 
 Because this all happens in a single prompt/response round trip to the LLM,
-the model has to split its attention between 
+the model has to split its attention between
 solving the coding problem and conforming to the edit format.
 
 The Architect/Editor approach splits this into two inference steps, possibly
@@ -342,13 +342,13 @@ Some noteworthy observations:
 - Pairing o1-preview as Architect with either Deepseek or o1-mini as Editor sets a SOTA significantly above the previous best score. This result is obtained with the "whole" editing format, requiring the Editor to output a full update copy of each edited source file. Both of these steps are therefore quite slow, so probably not practical for interactive use with aider.
 - Pairing OpenAI's o1-preview with Anthropic's Sonnet as the Editor produces the second best result. This is an entirely practical configuration for users able to work with both providers.
 - Pairing many models with themselves in the Architect/Editor configuration can provide
-significant benefits. 
+significant benefits.
 Sonnet, GPT-4o and GPT-4o-mini all scored higher when used as an Architect/Editor pair.
 - Deepseek is surprisingly effective as an Editor model. It seems remarkably capable at turning proposed coding solutions into new, updated versions of the source files. Using the efficient "diff" editing format, Deepseek helps all the Architect models except for Sonnet.
 
 ## Try it!
 
-The development version of aider 
+The development version of aider
 has built in defaults to support Architect/Editor coding with
 o1-preview, o1-mini, GPT-4o and Claude 3.5 Sonnet.
 Run aider with `--architect` or get started quickly like this:
@@ -374,7 +374,7 @@ aider --o1-preview --architect
 
 Aider has a number of "chat modes", and "architect" is available as a new chat mode.
 The `--architect` switch is a shortcut for `--chat-mode architect`.
-For more details, see documentation on 
+For more details, see documentation on
 [aider's chat modes](/docs/usage/modes.html).
 
 
