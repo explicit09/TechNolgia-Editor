@@ -50,11 +50,11 @@ private enum MarkerColor {
         let trimmed = colorString.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.hasPrefix("#") {
             let hex = trimmed.dropFirst()
-            if hex.count >= 6, let value = UInt(hex.prefix(6), radix: 16) {
-                return Color(hex: value)
+            if let color = Color(hexDigits: String(hex)) {
+                return color
             }
-        } else if let value = UInt(trimmed, radix: 16), trimmed.count >= 6 {
-            return Color(hex: value)
+        } else if let color = Color(hexDigits: trimmed) {
+            return color
         }
         switch trimmed.lowercased() {
         case "red": return .red
@@ -67,5 +67,18 @@ private enum MarkerColor {
         case "magenta": return .pink
         default: return CinematicTheme.primary
         }
+    }
+}
+
+private extension Color {
+    init?(hexDigits: String) {
+        let s = hexDigits.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (s.count == 6 || s.count == 8), let value = UInt64(s, radix: 16) else { return nil }
+        let hasAlpha = s.count == 8
+        let r = Double((value >> (hasAlpha ? 24 : 16)) & 0xFF) / 255.0
+        let g = Double((value >> (hasAlpha ? 16 : 8)) & 0xFF) / 255.0
+        let b = Double((value >> (hasAlpha ? 8 : 0)) & 0xFF) / 255.0
+        let a = hasAlpha ? Double(value & 0xFF) / 255.0 : 1.0
+        self.init(.sRGB, red: r, green: g, blue: b, opacity: a)
     }
 }

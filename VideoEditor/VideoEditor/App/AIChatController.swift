@@ -58,6 +58,23 @@ final class AIChatController {
         updateProviderSkillCatalog()
     }
 
+    /// Activate a skill by name. Sets activeSkill and returns (success, message).
+    /// Shared between in-app chat and MCP `activate_skill` so both surfaces behave identically.
+    func activateSkill(named skillName: String) -> (success: Bool, message: String) {
+        if let skill = skillRegistry.skill(named: skillName) {
+            activeSkill = skill.name
+            var result = "Skill activated: \(skill.name)\n\n"
+            if !skill.tools.isEmpty {
+                result += "Recommended tools for this workflow: \(skill.tools.joined(separator: ", "))\n"
+                result += "(Additional tools beyond this list are available if needed.)\n\n"
+            }
+            result += "---\n\(skill.content)"
+            return (true, result)
+        }
+        let available = skillRegistry.availableSkills.joined(separator: ", ")
+        return (false, "Unknown skill '\(skillName)'. Available skills: \(available)")
+    }
+
     private func updateProviderSkillCatalog() {
         if let claude = provider as? ClaudeProvider {
             claude.skillCatalog = skillRegistry.skillCatalog()
@@ -306,13 +323,14 @@ final class AIChatController {
             }
 
             if toolCall.name == "set_overlay_config" {
-                // Resolve via AIToolResolver (returns setBroadcastOverlay intent)
-                let intents = try toolResolver.resolve(toolName: toolCall.name, arguments: args, assets: appState.assets)
-                for intent in intents {
-                    try appState.perform(intent, source: .ai)
+                // Route through MCPServer's full handler so in-app and HTTP MCP behavior
+                // stay in sync: supports template, topics, chapters, sponsors, brand fields.
+                guard let server = appState.mcpServer else {
+                    return .init(toolName: toolCall.name, success: false, message: "Error: MCP server unavailable")
                 }
-                appState.rebuildComposition()
-                return .init(toolName: toolCall.name, success: true, message: "Overlay config set. Title: \(args["episode_title"] as? String ?? "")")
+                let result = server.handleSetOverlayConfig(args, appState: appState)
+                let isError = result.hasPrefix("Error:")
+                return .init(toolName: toolCall.name, success: !isError, message: result)
             }
 
             if toolCall.name == "get_transcript" {
@@ -373,19 +391,8 @@ final class AIChatController {
             // Skill activation — look up and return skill content
             if toolCall.name == "activate_skill" {
                 let skillName = args["name"] as? String ?? ""
-                if let skill = skillRegistry.skill(named: skillName) {
-                    activeSkill = skill.name
-                    var result = "Skill activated: \(skill.name)\n\n"
-                    if !skill.tools.isEmpty {
-                        result += "Recommended tools for this workflow: \(skill.tools.joined(separator: ", "))\n"
-                        result += "(Additional tools beyond this list are available if needed.)\n\n"
-                    }
-                    result += "---\n\(skill.content)"
-                    return .init(toolName: toolCall.name, success: true, message: result)
-                } else {
-                    let available = skillRegistry.availableSkills.joined(separator: ", ")
-                    return .init(toolName: toolCall.name, success: false, message: "Unknown skill '\(skillName)'. Available skills: \(available)")
-                }
+                let (success, message) = activateSkill(named: skillName)
+                return .init(toolName: toolCall.name, success: success, message: message)
             }
 
             // Playback & undo tools — need AppState directly

@@ -11,6 +11,11 @@ public struct CaptionStyler: Sendable {
         case pop, hormozi, bounce, typewriter
     }
 
+    public enum CaptionPlacement: Sendable {
+        case bottom
+        case centerBridge
+    }
+
     // MARK: - Public API
 
     /// Determine which word is active at a given time.
@@ -55,7 +60,8 @@ public struct CaptionStyler: Sendable {
     /// Render a styled caption as a CGImage. `wordProgress` (0-1) drives animation curves.
     public static func renderCaption(
         text: String, activeWordIndex: Int?, style: CaptionStyle,
-        size: CGSize, fontSize: CGFloat = 40, wordProgress: Float = 0
+        size: CGSize, fontSize: CGFloat = 40, wordProgress: Float = 0,
+        placement: CaptionPlacement = .bottom
     ) -> CGImage? {
         // Render at 1x — CIImage composites pixels 1:1 onto the video frame.
         // A 2x context would produce an image twice the frame size.
@@ -66,8 +72,15 @@ public struct CaptionStyler: Sendable {
 
         let words = text.components(separatedBy: " ")
         let fw = CGFloat(w), fh = CGFloat(h)
-        // CGContext origin is bottom-left; place text 15% from the bottom
-        let textY = fh * 0.15
+        // CGContext origin is bottom-left.
+        let textY: CGFloat = {
+            switch placement {
+            case .bottom:
+                return fh * 0.15
+            case .centerBridge:
+                return fh * 0.485
+            }
+        }()
 
         switch style {
         case .none:
@@ -76,7 +89,7 @@ public struct CaptionStyler: Sendable {
             renderPill(ctx: ctx, text: text, fontSize: fs, width: fw, textY: textY)
         case .karaoke:
             renderWordHighlight(ctx: ctx, words: words, activeIndex: activeWordIndex,
-                               fontSize: fs, width: fw, textY: textY)
+                               fontSize: fs * 1.14, width: fw, textY: textY, brandMode: true)
         case .bold:
             drawText(ctx: ctx, text: text, fontSize: fs * 1.3, x: nil, y: fh * 0.5, width: fw, color: white)
         case .outline:
@@ -117,6 +130,8 @@ public struct CaptionStyler: Sendable {
     private static let white = CGColor(red: 1, green: 1, blue: 1, alpha: 1)
     private static let dimWhite = CGColor(red: 1, green: 1, blue: 1, alpha: 0.8)
     private static let karaokeAccent = CGColor(red: 1, green: 0.92, blue: 0.0, alpha: 1)
+    private static let brandGreen = CGColor(red: 0.0, green: 0.82, blue: 0.38, alpha: 1)
+    private static let brandGold = CGColor(red: 1.0, green: 0.78, blue: 0.16, alpha: 1)
     private static let yellow = CGColor(red: 1, green: 0.92, blue: 0.23, alpha: 1)
 
     private static func makeContext(width: Int, height: Int) -> CGContext? {
@@ -136,11 +151,25 @@ public struct CaptionStyler: Sendable {
 
     private static func bounds(_ l: CTLine) -> CGRect { CTLineGetBoundsWithOptions(l, []) }
 
-    private static func pill(_ ctx: CGContext, x: CGFloat, y: CGFloat, w: CGFloat, h: CGFloat, pad: CGFloat = 16) {
+    private static func pill(
+        _ ctx: CGContext,
+        x: CGFloat,
+        y: CGFloat,
+        w: CGFloat,
+        h: CGFloat,
+        pad: CGFloat = 16,
+        strokeColor: CGColor? = nil
+    ) {
         let r = CGRect(x: x - pad, y: y - pad / 2, width: w + pad * 2, height: h + pad)
         ctx.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.75))
         ctx.addPath(CGPath(roundedRect: r, cornerWidth: 12, cornerHeight: 12, transform: nil))
         ctx.fillPath()
+        if let strokeColor {
+            ctx.setStrokeColor(strokeColor)
+            ctx.setLineWidth(3)
+            ctx.addPath(CGPath(roundedRect: r.insetBy(dx: 1.5, dy: 1.5), cornerWidth: 10, cornerHeight: 10, transform: nil))
+            ctx.strokePath()
+        }
     }
 
     /// Draw text centered in the safe area with automatic line wrapping via CTFramesetter.
@@ -221,14 +250,23 @@ public struct CaptionStyler: Sendable {
     }
 
     private static func renderWordHighlight(ctx: CGContext, words: [String], activeIndex: Int?,
-                                            fontSize: CGFloat, width: CGFloat, textY: CGFloat) {
+                                            fontSize: CGFloat, width: CGFloat, textY: CGFloat, brandMode: Bool = false) {
         let f = font(fontSize)
         let full = line(words.joined(separator: " "), font: f)
         let fb = bounds(full)
-        let startX = (width - fb.width) / 2
-        pill(ctx, x: startX, y: textY, w: fb.width, h: fb.height)
+        let safeW = width * safeAreaFraction
+        let startX = fb.width <= safeW ? (width - fb.width) / 2 : (width - safeW) / 2
+        pill(ctx, x: startX, y: textY, w: min(fb.width, safeW), h: fb.height, pad: brandMode ? 22 : 16)
         drawWords(ctx: ctx, words: words, activeIndex: activeIndex, fontSize: fontSize,
-                 startX: startX, textY: textY, activeColor: karaokeAccent)
+                 width: width, textY: textY, activeColor: brandMode ? brandGold : karaokeAccent, inactiveColor: brandMode ? white : dimWhite)
+        if brandMode, let activeIndex, activeIndex >= 0, activeIndex < words.count {
+            let layout = wordLayout(words, fontSize: fontSize, width: width)
+            if activeIndex < layout.count {
+                let (_, x, wordWidth) = layout[activeIndex]
+                ctx.setFillColor(brandGreen)
+                ctx.fill(CGRect(x: x, y: textY - 10, width: max(12, wordWidth - 10), height: 5))
+            }
+        }
     }
 
     private static func renderOutline(ctx: CGContext, text: String, fontSize: CGFloat, width: CGFloat, textY: CGFloat) {
@@ -328,10 +366,10 @@ public struct CaptionStyler: Sendable {
     }
 
     private static func drawWords(ctx: CGContext, words: [String], activeIndex: Int?,
-                                  fontSize: CGFloat, startX: CGFloat, textY: CGFloat, activeColor: CGColor) {
-        let layout = wordLayout(words, fontSize: fontSize, width: startX * 2 + bounds(line(words.joined(separator: " "), font: font(fontSize))).width)
+                                  fontSize: CGFloat, width: CGFloat, textY: CGFloat, activeColor: CGColor, inactiveColor: CGColor = dimWhite) {
+        let layout = wordLayout(words, fontSize: fontSize, width: width)
         for (i, (wl, x, _)) in layout.enumerated() {
-            ctx.setFillColor(i == activeIndex ? activeColor : dimWhite)
+            ctx.setFillColor(i == activeIndex ? activeColor : inactiveColor)
             ctx.textPosition = CGPoint(x: x, y: textY)
             CTLineDraw(wl, ctx)
         }

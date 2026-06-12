@@ -127,8 +127,9 @@ final class AppState {
             self?.scheduleSave()
         }
 
-        // Load existing project if timeline.json exists
-        loadProject()
+        // Load existing project if timeline.json exists. init can't await, so kick off
+        // the load — this is the only call site that doesn't need to block on completion.
+        Task { await loadProject() }
 
         let dbPath = bundleURL.appendingPathComponent("metadata.sqlite").path
         Task {
@@ -1536,75 +1537,73 @@ final class AppState {
     }
 
     /// Load project from bundle on launch.
-    private func loadProject() {
+    private func loadProject() async {
         let timelinePath = projectBundleURL.appendingPathComponent("timeline.json")
         guard FileManager.default.fileExists(atPath: timelinePath.path) else { return }
 
-        Task {
-            var restoredAssets: [MediaAsset] = []
+        var restoredAssets: [MediaAsset] = []
 
-            // Load timeline and project settings
-            if let loadedTimeline = try? await projectStore.load(from: projectBundleURL) {
-                context.timelineState.timeline = loadedTimeline
-                let metadata = await projectStore.projectMetadata()
-                context.timelineState.projectSettings = metadata.settings
-            }
+        // Load timeline and project settings
+        if let loadedTimeline = try? await projectStore.load(from: projectBundleURL) {
+            context.timelineState.timeline = loadedTimeline
+            let metadata = await projectStore.projectMetadata()
+            context.timelineState.projectSettings = metadata.settings
+        }
 
-            // Load overlay config
-            let overlayURL = projectBundleURL.appendingPathComponent("overlay.json")
-            if let overlayData = try? Data(contentsOf: overlayURL),
-               let overlay = try? JSONDecoder().decode(BroadcastOverlayConfig.self, from: overlayData) {
-                context.timelineState.broadcastOverlay = overlay
-            }
+        // Load overlay config
+        let overlayURL = projectBundleURL.appendingPathComponent("overlay.json")
+        if let overlayData = try? Data(contentsOf: overlayURL),
+           let overlay = try? JSONDecoder().decode(BroadcastOverlayConfig.self, from: overlayData) {
+            context.timelineState.broadcastOverlay = overlay
+        }
 
-            // Load short-form config
-            let shortFormURL = projectBundleURL.appendingPathComponent("shortform.json")
-            if let sfData = try? Data(contentsOf: shortFormURL),
-               let sf = try? JSONDecoder().decode(ShortFormConfig.self, from: sfData) {
-                context.timelineState.shortFormConfig = sf
-            }
+        // Load short-form config
+        let shortFormURL = projectBundleURL.appendingPathComponent("shortform.json")
+        if let sfData = try? Data(contentsOf: shortFormURL),
+           let sf = try? JSONDecoder().decode(ShortFormConfig.self, from: sfData) {
+            context.timelineState.shortFormConfig = sf
+        }
 
-            // Load assets and merge persisted transcripts
-            let assetsURL = projectBundleURL.appendingPathComponent("assets.json")
-            if let data = try? Data(contentsOf: assetsURL),
-               let loadedAssets = try? JSONDecoder().decode([MediaAsset].self, from: data) {
-                restoredAssets = loadedAssets
-                for var asset in loadedAssets {
-                    // Restore transcript from disk if not in assets.json
-                    if asset.analysis?.transcript == nil || asset.analysis!.transcript!.isEmpty {
-                        if let diskResult = await media.transcriptionService.loadTranscript(
-                            for: asset, bundleURL: projectBundleURL
-                        ) {
-                            var analysis = asset.analysis ?? MediaAnalysis()
-                            analysis.transcript = diskResult.words
-                            analysis.speakerSegments = diskResult.speakers
-                            asset.analysis = analysis
-                        }
-                    }
-                    // Activate bookmark access for reference imports, then validate
-                    let accessible = ExportFolderManager.canAccessWithoutCopy(path: asset.sourceURL.path)
-                        || FileManager.default.fileExists(atPath: asset.sourceURL.path)
-                    if accessible {
-                        await media.mediaManager.add(asset)
-                    } else {
-                        print("[AppState] Missing media file: \(asset.sourceURL.lastPathComponent) at \(asset.sourceURL.path)")
+        // Load assets and merge persisted transcripts
+        let assetsURL = projectBundleURL.appendingPathComponent("assets.json")
+        if let data = try? Data(contentsOf: assetsURL),
+           let loadedAssets = try? JSONDecoder().decode([MediaAsset].self, from: data) {
+            restoredAssets = loadedAssets
+            for var asset in loadedAssets {
+                // Restore transcript from disk if not in assets.json
+                if asset.analysis?.transcript == nil || asset.analysis!.transcript!.isEmpty {
+                    if let diskResult = await media.transcriptionService.loadTranscript(
+                        for: asset, bundleURL: projectBundleURL
+                    ) {
+                        var analysis = asset.analysis ?? MediaAnalysis()
+                        analysis.transcript = diskResult.words
+                        analysis.speakerSegments = diskResult.speakers
+                        asset.analysis = analysis
                     }
                 }
-                await media.refreshAssets()
-                await media.regenerateMissingThumbnails()
-                await removeAudiolessVideoClips(using: loadedAssets)
-            } else {
-                print("[AppState] No assets.json at \(assetsURL.path)")
-            }
-
-            timelineViewState.clearSelection()
-            normalizeSelection()
-            rebuildComposition()
-
-            if !restoredAssets.isEmpty {
-                Task(priority: .utility) { [weak self] in
-                    await self?.removeAudiolessVideoClips(using: restoredAssets)
+                // Activate bookmark access for reference imports, then validate
+                let accessible = ExportFolderManager.canAccessWithoutCopy(path: asset.sourceURL.path)
+                    || FileManager.default.fileExists(atPath: asset.sourceURL.path)
+                if accessible {
+                    await media.mediaManager.add(asset)
+                } else {
+                    print("[AppState] Missing media file: \(asset.sourceURL.lastPathComponent) at \(asset.sourceURL.path)")
                 }
+            }
+            await media.refreshAssets()
+            await media.regenerateMissingThumbnails()
+            await removeAudiolessVideoClips(using: loadedAssets)
+        } else {
+            print("[AppState] No assets.json at \(assetsURL.path)")
+        }
+
+        timelineViewState.clearSelection()
+        normalizeSelection()
+        rebuildComposition()
+
+        if !restoredAssets.isEmpty {
+            Task(priority: .utility) { [weak self] in
+                await self?.removeAudiolessVideoClips(using: restoredAssets)
             }
         }
     }
@@ -1640,7 +1639,7 @@ final class AppState {
         projectIndex.setActive(sanitized)
 
         // Switch to new project
-        switchToBundle(newURL)
+        await switchToBundle(newURL)
 
         return "Created project '\(sanitized)' at \(newURL.path)"
     }
@@ -1664,7 +1663,7 @@ final class AppState {
         Self.ensureProjectDirectories(at: targetURL)
 
         projectIndex.setActive(sanitized)
-        switchToBundle(targetURL)
+        await switchToBundle(targetURL)
 
         return "Opened project '\(sanitized)'"
     }
@@ -1689,7 +1688,7 @@ final class AppState {
 
         let untitledURL = projectIndex.bundleURL(for: "Untitled")
         Self.ensureProjectDirectories(at: untitledURL)
-        switchToBundle(untitledURL)
+        await switchToBundle(untitledURL)
 
         return "Closed '\(closedName)', opened Untitled"
     }
@@ -1713,7 +1712,7 @@ final class AppState {
     }
 
     /// Rename the current project.
-    func renameProject(to newName: String) -> String {
+    func renameProject(to newName: String) async -> String {
         let sanitized = sanitizedProjectName(newName)
         let oldName = projectIndex.activeProjectName
 
@@ -1744,7 +1743,7 @@ final class AppState {
         media.onAssetsChanged = { [weak self] in self?.scheduleSave() }
 
         // Reload assets into new MediaCoordinator
-        loadProject()
+        await loadProject()
 
         return "Renamed '\(oldName)' to '\(sanitized)'"
     }
@@ -1781,8 +1780,9 @@ final class AppState {
 
     // MARK: - Internal project switching
 
-    /// Reset editor state and load a different project bundle.
-    private func switchToBundle(_ newURL: URL) {
+    /// Reset editor state and load a different project bundle. Awaits the bundle load
+    /// so callers can return success only after the timeline is fully populated.
+    private func switchToBundle(_ newURL: URL) async {
         // Stop playback
         playbackEngine.pause()
 
@@ -1802,12 +1802,8 @@ final class AppState {
 
         // Ensure removeAll completes before loading the new project
         // Note: don't refreshAssets() here — loadProject() will refresh after adding assets
-        Task {
-            await media.mediaManager.removeAll()
-            await MainActor.run {
-                loadProject()
-            }
-        }
+        await media.mediaManager.removeAll()
+        await loadProject()
     }
 
     // MARK: - Media import

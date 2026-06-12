@@ -252,6 +252,17 @@ public final class EffectCompositor: NSObject, AVVideoCompositing, @unchecked Se
                 let visibleWords = Array(allCaptionWords[windowStart..<windowEnd])
                 let text = visibleWords.map(\.word).joined(separator: " ")
                 let localActiveIdx = idx - windowStart
+                let captionPlacement: CaptionStyler.CaptionPlacement = {
+                    guard isShortForm, let config = instruction.shortFormConfig else {
+                        return .bottom
+                    }
+                    switch config.layoutAt(time: time) {
+                    case .split:
+                        return .centerBridge
+                    case .fill, .sidebar:
+                        return .bottom
+                    }
+                }()
 
                 if let captionImage = CaptionStyler.renderCaption(
                     text: text,
@@ -259,7 +270,8 @@ public final class EffectCompositor: NSObject, AVVideoCompositing, @unchecked Se
                     style: captionStyle,
                     size: renderSize,
                     fontSize: fontSize,
-                    wordProgress: wordProgress
+                    wordProgress: wordProgress,
+                    placement: captionPlacement
                 ) {
                     let ciCaption = CIImage(cgImage: captionImage)
                     image = ciCaption.composited(over: image)
@@ -590,6 +602,25 @@ public final class EffectCompositor: NSObject, AVVideoCompositing, @unchecked Se
         return image.composited(over: background).cropped(to: renderRect)
     }
 
+    static func scaleToFillRenderFrame(_ image: CIImage, renderSize: CGSize) -> CIImage {
+        let extent = image.extent.integral
+        guard extent.width > 0, extent.height > 0, renderSize.width > 0, renderSize.height > 0 else {
+            return image
+        }
+
+        let normalized = image.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
+        let scale = max(renderSize.width / extent.width, renderSize.height / extent.height)
+        let scaledWidth = extent.width * scale
+        let scaledHeight = extent.height * scale
+        let centered = normalized
+            .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+            .transformed(by: CGAffineTransform(
+                translationX: (renderSize.width - scaledWidth) / 2,
+                y: (renderSize.height - scaledHeight) / 2
+            ))
+        return centered.cropped(to: CGRect(origin: .zero, size: renderSize))
+    }
+
     // MARK: - Transition Handling
 
     private func handleTransition(_ request: AVAsynchronousVideoCompositionRequest, instruction: TransitionInstruction) {
@@ -667,16 +698,40 @@ public final class EffectCompositor: NSObject, AVVideoCompositing, @unchecked Se
         // Start with background color
         var composited = CIImage(color: instruction.backgroundColor).cropped(to: renderRect)
 
-        // Composite layers bottom-to-top in stable track order.
-        for layer in Self.orderedOverlayLayers(for: instruction) {
+        // Composite layers bottom-to-top in stable track order. In short-form mode,
+        // only the bottom/main camera layer should receive speaker-aware 9:16
+        // recomposition; upper layers are B-roll/overlays and must stay visible.
+        let orderedLayers = Self.orderedOverlayLayers(for: instruction)
+        let baseShortFormTrackID = orderedLayers.first?.trackID
+        let hasShortFormCutaway = instruction.shortFormConfig?.isEnabled == true && orderedLayers.count > 1
+        for layer in orderedLayers {
+            if hasShortFormCutaway, layer.trackID == baseShortFormTrackID {
+                continue
+            }
+
             guard let sourceBuffer = request.sourceFrame(byTrackID: layer.trackID) else {
                 continue // Skip layers with no frame at this time
             }
 
             var layerImage = CIImage(cvPixelBuffer: sourceBuffer)
 
-            // Apply crop
-            layerImage = Self.applyCropRect(layer.cropRect, to: layerImage)
+            if let sfConfig = instruction.shortFormConfig,
+               sfConfig.isEnabled,
+               layer.trackID == baseShortFormTrackID {
+                let sourceTime = request.compositionTime.seconds + sfConfig.sourceTimeOffset
+                layerImage = ShortFormLayoutRenderer.recompose(
+                    source: layerImage,
+                    config: sfConfig,
+                    at: sourceTime,
+                    renderSize: renderSize
+                )
+            } else {
+                // Apply crop to overlays/B-roll without speaker-aware recomposition.
+                layerImage = Self.applyCropRect(layer.cropRect, to: layerImage)
+                if instruction.shortFormConfig?.isEnabled == true {
+                    layerImage = Self.scaleToFillRenderFrame(layerImage, renderSize: renderSize)
+                }
+            }
 
             // Apply per-layer effects
             for effect in layer.effects {

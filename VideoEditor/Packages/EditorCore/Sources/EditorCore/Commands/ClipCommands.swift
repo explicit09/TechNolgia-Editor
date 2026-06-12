@@ -306,6 +306,7 @@ public enum CommandError: Error {
     case trackNotFound(UUID)
     case clipNotFound(UUID)
     case trackLocked(UUID)
+    case trackNotEmpty(UUID)
     case splitPointOutOfRange
     case trackNotEmpty(UUID)
     case invalidRemoveSectionRange

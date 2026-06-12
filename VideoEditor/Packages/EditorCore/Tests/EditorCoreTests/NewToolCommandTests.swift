@@ -196,16 +196,21 @@ struct NewToolCommandTests {
         try cmd.execute(context: context)
 
         let clip0 = context.timelineState.timeline.tracks[0].clips[0]
-        let scaleTrack = clip0.keyframes.tracks["scale"]
+        // EffectCompositor reads scaleX/scaleY (not "scale"), so AddZoomEffectCommand
+        // writes uniform scale to both axes.
+        let scaleXTrack = clip0.keyframes.tracks["scaleX"]
+        let scaleYTrack = clip0.keyframes.tracks["scaleY"]
         let posXTrack = clip0.keyframes.tracks["positionX"]
         let posYTrack = clip0.keyframes.tracks["positionY"]
 
-        #expect(scaleTrack != nil)
-        #expect(scaleTrack?.count == 2)
-        #expect(scaleTrack?[0].value == 1.0)
-        #expect(scaleTrack?[1].value == 1.5)
-        #expect(scaleTrack?[0].time == 1.0)
-        #expect(scaleTrack?[1].time == 4.0) // startTime + duration
+        #expect(scaleXTrack != nil)
+        #expect(scaleXTrack?.count == 2)
+        #expect(scaleXTrack?[0].value == 1.0)
+        #expect(scaleXTrack?[1].value == 1.5)
+        #expect(scaleXTrack?[0].time == 1.0)
+        #expect(scaleXTrack?[1].time == 4.0) // startTime + duration
+        #expect(scaleYTrack?.count == 2)
+        #expect(scaleYTrack?[1].value == 1.5)
 
         #expect(posXTrack != nil)
         #expect(posYTrack != nil)
@@ -213,7 +218,8 @@ struct NewToolCommandTests {
         try cmd.undo(context: context)
 
         let undone = context.timelineState.timeline.tracks[0].clips[0]
-        #expect(undone.keyframes.tracks["scale"] == nil)
+        #expect(undone.keyframes.tracks["scaleX"] == nil)
+        #expect(undone.keyframes.tracks["scaleY"] == nil)
         #expect(undone.keyframes.tracks["positionX"] == nil)
         #expect(undone.keyframes.tracks["positionY"] == nil)
     }
@@ -236,8 +242,8 @@ struct NewToolCommandTests {
         ))
         try cmd.execute(context: context)
 
-        let scaleTrack = context.timelineState.timeline.tracks[0].clips[0].keyframes.tracks["scale"]
-        #expect(scaleTrack?.count == 2)
-        #expect(scaleTrack?[1].value == 2.0)
+        let scaleXTrack = context.timelineState.timeline.tracks[0].clips[0].keyframes.tracks["scaleX"]
+        #expect(scaleXTrack?.count == 2)
+        #expect(scaleXTrack?[1].value == 2.0)
     }
 }

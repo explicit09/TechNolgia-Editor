@@ -906,7 +906,8 @@ public struct AddZoomEffectCommand: Command {
     public let centerX: Double
     public let centerY: Double
     public var affectedClipIDs: [UUID] { [clipID] }
-    private var previousScaleKeyframes: [Keyframe]?
+    private var previousScaleXKeyframes: [Keyframe]?
+    private var previousScaleYKeyframes: [Keyframe]?
     private var previousPositionXKeyframes: [Keyframe]?
     private var previousPositionYKeyframes: [Keyframe]?
 
@@ -930,17 +931,20 @@ public struct AddZoomEffectCommand: Command {
 
     public mutating func execute(context: EditingContext) throws {
         try modifyClip(id: clipID, context: context) { clip in
-            previousScaleKeyframes = clip.keyframes.tracks["scale"]
+            previousScaleXKeyframes = clip.keyframes.tracks["scaleX"]
+            previousScaleYKeyframes = clip.keyframes.tracks["scaleY"]
             previousPositionXKeyframes = clip.keyframes.tracks["positionX"]
             previousPositionYKeyframes = clip.keyframes.tracks["positionY"]
 
             let endTime = startTime + duration
 
-            // Scale keyframes: zoom from zoomStart to zoomEnd
-            clip.keyframes.tracks["scale"] = [
+            // Uniform scale on both axes — EffectCompositor reads scaleX/scaleY, not "scale".
+            let scaleKfs = [
                 Keyframe(time: startTime, value: zoomStart, interpolation: .easeIn),
                 Keyframe(time: endTime, value: zoomEnd, interpolation: .easeOut)
             ]
+            clip.keyframes.tracks["scaleX"] = scaleKfs
+            clip.keyframes.tracks["scaleY"] = scaleKfs
 
             // Position keyframes: keep center point stable during zoom
             // centerX/centerY are 0..1 normalized; offset from 0.5 determines pan
@@ -959,7 +963,8 @@ public struct AddZoomEffectCommand: Command {
 
     public func undo(context: EditingContext) throws {
         try modifyClip(id: clipID, context: context) { clip in
-            clip.keyframes.tracks["scale"] = previousScaleKeyframes
+            clip.keyframes.tracks["scaleX"] = previousScaleXKeyframes
+            clip.keyframes.tracks["scaleY"] = previousScaleYKeyframes
             clip.keyframes.tracks["positionX"] = previousPositionXKeyframes
             clip.keyframes.tracks["positionY"] = previousPositionYKeyframes
         }

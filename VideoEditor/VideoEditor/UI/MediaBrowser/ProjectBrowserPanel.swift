@@ -221,7 +221,7 @@ struct ProjectBrowserPanel: View {
         }
         // Must be the active project to rename
         if oldName == appState.projectIndex.activeProjectName {
-            _ = appState.renameProject(to: name)
+            Task { _ = await appState.renameProject(to: name) }
         }
         renamingProject = nil
     }

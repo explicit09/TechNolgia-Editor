@@ -242,7 +242,12 @@ public struct CompositionBuilder {
                     if let compTrack,
                        let sourceTrack = try? await avAsset.loadTracks(withMediaType: .video).first {
 
-                        try? compTrack.insertTimeRange(sourceRange, of: sourceTrack, at: insertTime)
+                        do {
+                            try compTrack.insertTimeRange(sourceRange, of: sourceTrack, at: insertTime)
+                        } catch {
+                            print("[CompositionBuilder] ERROR: failed to insert video clip '\(clip.metadata.label ?? mediaAsset.name)' at \(clip.timelineRange.start)s: \(error.localizedDescription)")
+                            continue
+                        }
 
                         // Apply speed
                         if clip.speed != 1.0 {
@@ -285,7 +290,12 @@ public struct CompositionBuilder {
                                 continue
                             }
 
-                            try? audioCompTrack.insertTimeRange(sourceRange, of: audioSourceTrack, at: insertTime)
+                            do {
+                                try audioCompTrack.insertTimeRange(sourceRange, of: audioSourceTrack, at: insertTime)
+                            } catch {
+                                print("[CompositionBuilder] ERROR: failed to insert extracted audio for '\(clip.metadata.label ?? mediaAsset.name)' at \(clip.timelineRange.start)s: \(error.localizedDescription)")
+                                continue
+                            }
 
                             if clip.speed != 1.0 {
                                 let insertedRange = CMTimeRange(start: insertTime, duration: sourceDuration)
@@ -316,7 +326,12 @@ public struct CompositionBuilder {
                             continue
                         }
 
-                        try? compTrack.insertTimeRange(sourceRange, of: sourceTrack, at: insertTime)
+                        do {
+                            try compTrack.insertTimeRange(sourceRange, of: sourceTrack, at: insertTime)
+                        } catch {
+                            print("[CompositionBuilder] ERROR: failed to insert audio clip '\(clip.metadata.label ?? mediaAsset.name)' at \(clip.timelineRange.start)s: \(error.localizedDescription)")
+                            continue
+                        }
 
                         if clip.speed != 1.0 {
                             let insertedRange = CMTimeRange(start: insertTime, duration: sourceDuration)

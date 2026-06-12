@@ -108,8 +108,10 @@ struct VideoEditorApp: App {
             return
         }
 
-        let result = appState.renameProject(to: name)
-        presentProjectResultIfNeeded(result)
+        Task {
+            let result = await appState.renameProject(to: name)
+            presentProjectResultIfNeeded(result)
+        }
     }
 
     private func openProject(named name: String) {
