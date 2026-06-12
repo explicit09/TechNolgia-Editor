@@ -1236,7 +1236,7 @@ public struct AIToolResolver: Sendable {
             let color = arguments["color"] as? String ?? "#FF0000"
             return [.setMarker(at: time, label: label, color: color)]
 
-        case "remove_silence", "remove_section", "ripple_delete", "normalize_audio":
+        case "remove_silence", "normalize_audio":
             // Handled upstream in AIChatController / MCPServer (needs AppState).
             // Cannot run inside `batch` — batch will reject these names with a clear error.
             return []
@@ -1600,7 +1600,7 @@ public struct AIToolResolver: Sendable {
                 // Pure AppState/playback
                 "undo", "redo", "play_pause", "seek", "toggle_loop", "get_action_log", "activate_skill",
                 // Need AppState — handled in AIChatController / MCPServer, resolver returns []
-                "remove_silence", "remove_section", "ripple_delete", "normalize_audio",
+                "remove_silence", "normalize_audio",
                 // MCP-direct only (no resolver case)
                 "add_to_timeline", "clear_project", "import_media", "delete_asset", "fix_av_links",
                 "create_project", "open_project", "save_project", "list_projects", "close_project",

@@ -258,6 +258,35 @@ struct AIServicesTests {
     }
 
     @MainActor
+    @Test("Section removal tools resolve to edit intents")
+    func sectionRemovalToolResolution() throws {
+        let resolver = AIToolResolver()
+        let clipID = UUID()
+
+        let removeIntents = try resolver.resolve(toolName: "remove_section", arguments: [
+            "start_time": 12.0,
+            "end_time": 18.5,
+        ])
+        #expect(removeIntents.count == 1)
+        if case .removeSection(let start, let end) = removeIntents[0] {
+            #expect(start == 12.0)
+            #expect(end == 18.5)
+        } else {
+            Issue.record("remove_section should resolve to removeSection")
+        }
+
+        let rippleIntents = try resolver.resolve(toolName: "ripple_delete", arguments: [
+            "clip_ids": [clipID.uuidString],
+        ])
+        #expect(rippleIntents.count == 1)
+        if case .rippleDeleteClips(let ids) = rippleIntents[0] {
+            #expect(ids == [clipID])
+        } else {
+            Issue.record("ripple_delete should resolve to rippleDeleteClips")
+        }
+    }
+
+    @MainActor
     @Test("AppState tools resolve to empty intents (handled upstream)")
     func appStateToolResolution() throws {
         let resolver = AIToolResolver()
