@@ -308,7 +308,6 @@ public enum CommandError: Error {
     case trackLocked(UUID)
     case trackNotEmpty(UUID)
     case splitPointOutOfRange
-    case trackNotEmpty(UUID)
     case invalidRemoveSectionRange
     case noClipsInRemoveSectionRange
     case rippleDeleteEmpty
