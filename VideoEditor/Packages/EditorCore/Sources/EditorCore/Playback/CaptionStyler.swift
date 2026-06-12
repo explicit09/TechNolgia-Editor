@@ -263,14 +263,6 @@ public struct CaptionStyler: Sendable {
         drawWords(ctx: ctx, words: words, activeIndex: activeIndex, fontSize: fontSize,
                  width: width, textY: textY, activeColor: brandMode ? brandGreen : karaokeAccent, inactiveColor: brandMode ? white : dimWhite)
         ctx.setShadow(offset: .zero, blur: 0, color: nil)
-        if brandMode, let activeIndex, activeIndex >= 0, activeIndex < words.count {
-            let layout = wordLayout(words, fontSize: fontSize, width: width)
-            if activeIndex < layout.count {
-                let (_, x, wordWidth) = layout[activeIndex]
-                ctx.setFillColor(brandGreen)
-                ctx.fill(CGRect(x: x, y: textY - 10, width: max(12, wordWidth - 10), height: 5))
-            }
-        }
     }
 
     private static func renderOutline(ctx: CGContext, text: String, fontSize: CGFloat, width: CGFloat, textY: CGFloat) {
