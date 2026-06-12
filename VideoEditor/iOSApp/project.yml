@@ -45,10 +45,6 @@ targets:
             CFBundleURLName: com.videoeditor.shorts.linkedin
             CFBundleURLSchemes:
               - com.videoeditor.shorts
-          - CFBundleTypeRole: Editor
-            CFBundleURLName: com.videoeditor.shorts.youtube
-            CFBundleURLSchemes:
-              - com.googleusercontent.apps.REPLACE_WITH_CLIENT_ID
         UILaunchScreen:
           UIColorName: ""
         UISupportedInterfaceOrientations:
