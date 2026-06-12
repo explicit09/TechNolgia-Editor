@@ -253,6 +253,9 @@ public final class EffectCompositor: NSObject, AVVideoCompositing, @unchecked Se
                 let text = visibleWords.map(\.word).joined(separator: " ")
                 let localActiveIdx = idx - windowStart
                 let captionPlacement: CaptionStyler.CaptionPlacement = {
+                    if captionStyle == .karaoke {
+                        return .bottom
+                    }
                     guard isShortForm, let config = instruction.shortFormConfig else {
                         return .bottom
                     }

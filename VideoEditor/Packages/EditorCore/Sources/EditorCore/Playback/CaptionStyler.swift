@@ -76,7 +76,7 @@ public struct CaptionStyler: Sendable {
         let textY: CGFloat = {
             switch placement {
             case .bottom:
-                return fh * 0.15
+                return fh * 0.10
             case .centerBridge:
                 return fh * 0.485
             }
@@ -256,9 +256,13 @@ public struct CaptionStyler: Sendable {
         let fb = bounds(full)
         let safeW = width * safeAreaFraction
         let startX = fb.width <= safeW ? (width - fb.width) / 2 : (width - safeW) / 2
-        pill(ctx, x: startX, y: textY, w: min(fb.width, safeW), h: fb.height, pad: brandMode ? 22 : 16)
+        if !brandMode {
+            pill(ctx, x: startX, y: textY, w: min(fb.width, safeW), h: fb.height)
+        }
+        ctx.setShadow(offset: CGSize(width: 0, height: -3), blur: 8, color: CGColor(red: 0, green: 0, blue: 0, alpha: 0.85))
         drawWords(ctx: ctx, words: words, activeIndex: activeIndex, fontSize: fontSize,
-                 width: width, textY: textY, activeColor: brandMode ? brandGold : karaokeAccent, inactiveColor: brandMode ? white : dimWhite)
+                 width: width, textY: textY, activeColor: brandMode ? brandGreen : karaokeAccent, inactiveColor: brandMode ? white : dimWhite)
+        ctx.setShadow(offset: .zero, blur: 0, color: nil)
         if brandMode, let activeIndex, activeIndex >= 0, activeIndex < words.count {
             let layout = wordLayout(words, fontSize: fontSize, width: width)
             if activeIndex < layout.count {
