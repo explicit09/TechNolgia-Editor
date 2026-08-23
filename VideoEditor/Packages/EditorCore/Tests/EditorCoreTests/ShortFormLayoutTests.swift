@@ -130,7 +130,7 @@ struct ShortFormLayoutTests {
         #expect(result.extent.height >= 1920)
     }
 
-    @Test("Fill layout with speaker 0 shows red (left person)")
+    @Test("Fill layout with speaker 0 keeps split sizing with speaker 0 on top")
     func fillSpeaker0() {
         let source = makeTestSourceImage()
         let config = makeConfig(layout: .fill(activeSpeaker: 0))
@@ -140,12 +140,13 @@ struct ShortFormLayoutTests {
             source: source, config: config, at: 0, renderSize: renderSize
         )
 
-        // Center should be red (Person A — left half of source)
-        let centerColor = sampleColor(from: result, at: CGPoint(x: 540, y: 960))
-        #expect(centerColor.r > 0.5, "Fill speaker 0 should show red (left person)")
+        let topColor = sampleColor(from: result, at: CGPoint(x: 540, y: 1440))
+        let bottomColor = sampleColor(from: result, at: CGPoint(x: 540, y: 480))
+        #expect(topColor.r > 0.5, "Speaker 0 should be on top")
+        #expect(bottomColor.b > 0.5, "Speaker 1 should remain visible on bottom")
     }
 
-    @Test("Fill layout with speaker 1 shows blue (right person)")
+    @Test("Fill layout with speaker 1 keeps split sizing with speaker 1 on top")
     func fillSpeaker1() {
         let source = makeTestSourceImage()
         let config = makeConfig(layout: .fill(activeSpeaker: 1))
@@ -155,9 +156,10 @@ struct ShortFormLayoutTests {
             source: source, config: config, at: 0, renderSize: renderSize
         )
 
-        // Center should be blue (Person B — right half of source)
-        let centerColor = sampleColor(from: result, at: CGPoint(x: 540, y: 960))
-        #expect(centerColor.b > 0.5, "Fill speaker 1 should show blue (right person)")
+        let topColor = sampleColor(from: result, at: CGPoint(x: 540, y: 1440))
+        let bottomColor = sampleColor(from: result, at: CGPoint(x: 540, y: 480))
+        #expect(topColor.b > 0.5, "Speaker 1 should be on top")
+        #expect(bottomColor.r > 0.5, "Speaker 0 should remain visible on bottom")
     }
 
     // MARK: - Face Tracking Tests

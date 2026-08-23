@@ -34,10 +34,10 @@ public struct ShortFormLayoutRenderer {
                 config: config, time: time, renderSize: renderSize
             )
         case .fill(let activeSpeaker):
-            return renderFill(
+            return renderSplit(
                 source: source, sourceW: sourceW, sourceH: sourceH,
                 config: config, time: time, renderSize: renderSize,
-                activeSpeaker: activeSpeaker
+                topSpeaker: activeSpeaker
             )
         case .sidebar(let activeSpeaker):
             return renderSidebar(
@@ -56,7 +56,8 @@ extension ShortFormLayoutRenderer {
     /// Two speakers stacked vertically, each cropped from their half of the source.
     static func renderSplit(
         source: CIImage, sourceW: CGFloat, sourceH: CGFloat,
-        config: ShortFormConfig, time: TimeInterval, renderSize: CGSize
+        config: ShortFormConfig, time: TimeInterval, renderSize: CGSize,
+        topSpeaker: Int = 0
     ) -> CIImage {
         let divider = config.dividerWidth * (renderSize.height / 1920)
         let availableH = renderSize.height
@@ -95,23 +96,28 @@ extension ShortFormLayoutRenderer {
             height: cropB.height
         )
 
-        // Crop and scale person A
-        let croppedA = source.cropped(to: sourceRectA)
-        let scaleAX = renderSize.width / sourceRectA.width
-        let scaleAY = regionH / sourceRectA.height
-        let scaledA = croppedA
-            .transformed(by: CGAffineTransform(translationX: -sourceRectA.minX, y: -sourceRectA.minY))
-            .transformed(by: CGAffineTransform(scaleX: scaleAX, y: scaleAY))
-            .transformed(by: CGAffineTransform(translationX: 0, y: regionH + divider))
+        func scaledHalf(sourceRect: CGRect, yOffset: CGFloat) -> CIImage {
+            let cropped = source.cropped(to: sourceRect)
+            let scaleX = renderSize.width / sourceRect.width
+            let scaleY = regionH / sourceRect.height
+            return cropped
+                .transformed(by: CGAffineTransform(translationX: -sourceRect.minX, y: -sourceRect.minY))
+                .transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+                .transformed(by: CGAffineTransform(translationX: 0, y: yOffset))
+        }
 
-        // Crop and scale person B
-        let croppedB = source.cropped(to: sourceRectB)
-        let scaleBX = renderSize.width / sourceRectB.width
-        let scaleBY = regionH / sourceRectB.height
-        let scaledB = croppedB
-            .transformed(by: CGAffineTransform(translationX: -sourceRectB.minX, y: -sourceRectB.minY))
-            .transformed(by: CGAffineTransform(scaleX: scaleBX, y: scaleBY))
-            .transformed(by: CGAffineTransform(translationX: 0, y: 0))
+        let topRect: CGRect
+        let bottomRect: CGRect
+        if topSpeaker == 1 {
+            topRect = sourceRectB
+            bottomRect = sourceRectA
+        } else {
+            topRect = sourceRectA
+            bottomRect = sourceRectB
+        }
+
+        let scaledTop = scaledHalf(sourceRect: topRect, yOffset: regionH + divider)
+        let scaledBottom = scaledHalf(sourceRect: bottomRect, yOffset: 0)
 
         // Black background
         let bg = CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: renderSize))
@@ -121,10 +127,10 @@ extension ShortFormLayoutRenderer {
         let dividerImage = CIImage(color: CIColor(red: 0.15, green: 0.15, blue: 0.15))
             .cropped(to: CGRect(x: 0, y: dividerY, width: renderSize.width, height: divider))
 
-        // Composite: bg → B (bottom) → divider → A (top)
-        return scaledA
+        // Composite: bg → bottom speaker → divider → top speaker
+        return scaledTop
             .composited(over: dividerImage
-                .composited(over: scaledB
+                .composited(over: scaledBottom
                     .composited(over: bg)))
     }
 

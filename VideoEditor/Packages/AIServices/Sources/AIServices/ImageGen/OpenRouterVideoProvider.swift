@@ -37,6 +37,15 @@ public struct OpenRouterVideoJob: Codable, Equatable, Sendable {
         case error
     }
 
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        status = try container.decode(String.self, forKey: .status)
+        pollingURL = try container.decodeIfPresent(String.self, forKey: .pollingURL)
+        unsignedURLs = try container.decodeIfPresent([String].self, forKey: .unsignedURLs) ?? []
+        error = try container.decodeIfPresent(String.self, forKey: .error)
+    }
+
     public init(id: String, status: String, pollingURL: String? = nil, unsignedURLs: [String] = [], error: String? = nil) {
         self.id = id
         self.status = status

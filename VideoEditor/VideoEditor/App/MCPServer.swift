@@ -3164,7 +3164,28 @@ final class MCPServer {
 
         // Step 3: Speaker mapping
         var speakerToFace: [Int: Int] = [:]
-        if let result = await appState.media.transcriptionService.getTranscript(
+        let transcriptResult = await appState.media.transcriptionService.getTranscript(
+            for: asset, bundleURL: appState.projectBundleURL
+        )
+        if let result = transcriptResult,
+           let speakers = result.speakers {
+            let rangeSpeakers = speakers.compactMap { seg -> SpeakerSegment? in
+                let segStart = max(seg.range.start, sourceStart)
+                let segEnd = min(seg.range.end, sourceEnd)
+                guard segEnd > segStart else { return nil }
+                return SpeakerSegment(
+                    speakerID: seg.speakerID,
+                    range: TimeRange(start: segStart, end: segEnd)
+                )
+            }
+            let mapper = SpeakerFaceMapper()
+            speakerToFace = await mapper.mapByLipActivity(
+                speakerSegments: rangeSpeakers.isEmpty ? speakers : rangeSpeakers,
+                faceTracks: faceTracks,
+                videoURL: mediaURL,
+                sourceOffset: 0
+            )
+        } else if let result = await appState.media.transcriptionService.getTranscript(
             for: asset, bundleURL: appState.projectBundleURL
         ), let speakers = result.speakers {
             let mapper = SpeakerFaceMapper()
@@ -3178,12 +3199,38 @@ final class MCPServer {
         var layoutSegments: [LayoutSegment]
 
         if layoutStr == "auto" {
-            // Ask Claude to decide layout based on transcript content
-            layoutSegments = await decideLayoutWithClaude(
-                asset: asset, appState: appState,
-                sourceStart: sourceStart, sourceEnd: sourceEnd,
-                speakerToFace: speakerToFace
-            )
+            if let speakers = transcriptResult?.speakers, !speakers.isEmpty {
+                let clippedSpeakers = speakers.compactMap { seg -> SpeakerSegment? in
+                    let segStart = max(seg.range.start, sourceStart)
+                    let segEnd = min(seg.range.end, sourceEnd)
+                    guard segEnd > segStart else { return nil }
+                    return SpeakerSegment(
+                        speakerID: seg.speakerID,
+                        range: TimeRange(start: segStart - sourceStart, end: segEnd - sourceStart)
+                    )
+                }
+
+                let totalDuration = clippedSpeakers.reduce(0.0) { $0 + ($1.range.end - $1.range.start) }
+                var durationBySpeaker: [Int: Double] = [:]
+                for seg in clippedSpeakers {
+                    let speakerID = Int(seg.speakerID.filter(\.isNumber)) ?? 0
+                    durationBySpeaker[speakerID, default: 0] += seg.range.end - seg.range.start
+                }
+
+                if totalDuration > 0,
+                   let (dominantSpeaker, duration) = durationBySpeaker.max(by: { $0.value < $1.value }),
+                   duration / totalDuration >= 0.8 {
+                    let faceIndex = speakerToFace[dominantSpeaker] ?? dominantSpeaker
+                    layoutSegments = [LayoutSegment(startTime: 0, layout: .fill(activeSpeaker: faceIndex))]
+                } else if !clippedSpeakers.isEmpty {
+                    let decider = LayoutDecider()
+                    layoutSegments = decider.decide(speakerSegments: clippedSpeakers, speakerToFace: speakerToFace)
+                } else {
+                    layoutSegments = [LayoutSegment(startTime: 0, layout: .split)]
+                }
+            } else {
+                layoutSegments = [LayoutSegment(startTime: 0, layout: .split)]
+            }
             report.append("3. Layout: auto (\(layoutSegments.count) segments)")
         } else {
             let layout: ShortFormLayout
@@ -3198,9 +3245,7 @@ final class MCPServer {
 
         // Step 5: Get caption words from transcript
         var captionWords: [TranscriptWord] = []
-        if let result = await appState.media.transcriptionService.getTranscript(
-            for: asset, bundleURL: appState.projectBundleURL
-        ) {
+        if let result = transcriptResult {
             captionWords = result.words.filter { $0.start >= sourceStart && $0.end <= sourceEnd }
         }
         report.append("5. Captions: \(captionWords.count) words")

@@ -45,6 +45,23 @@ struct OpenRouterVideoProviderTests {
         #expect(job.unsignedURLs == ["https://cdn.example/video.mp4"])
     }
 
+    @Test("job parser accepts pending submit response before content urls exist")
+    func parserAcceptsPendingSubmitResponse() throws {
+        let response = """
+        {
+          "id": "job-123",
+          "polling_url": "https://openrouter.ai/api/v1/videos/job-123",
+          "status": "pending"
+        }
+        """
+
+        let job = try OpenRouterVideoProvider.parseJob(from: Data(response.utf8))
+        #expect(job.id == "job-123")
+        #expect(job.status == "pending")
+        #expect(job.pollingURL == "https://openrouter.ai/api/v1/videos/job-123")
+        #expect(job.unsignedURLs.isEmpty)
+    }
+
     @Test("download request falls back to content endpoint")
     func downloadRequestFallsBackToContentEndpoint() throws {
         let request = try OpenRouterVideoProvider.downloadRequest(

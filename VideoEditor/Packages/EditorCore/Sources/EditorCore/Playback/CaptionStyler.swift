@@ -126,11 +126,12 @@ public struct CaptionStyler: Sendable {
 
     /// Safe area is 85% of frame width (7.5% margin each side).
     private static let safeAreaFraction: CGFloat = 0.85
+    private static let textShadowSafetyInset: CGFloat = 16
 
     private static let white = CGColor(red: 1, green: 1, blue: 1, alpha: 1)
     private static let dimWhite = CGColor(red: 1, green: 1, blue: 1, alpha: 0.8)
     private static let karaokeAccent = CGColor(red: 1, green: 0.92, blue: 0.0, alpha: 1)
-    private static let brandGreen = CGColor(red: 0.0, green: 0.82, blue: 0.38, alpha: 1)
+    private static let brandGreen = CGColor(red: 0.0, green: 1.0, blue: 0.20, alpha: 1)
     private static let brandGold = CGColor(red: 1.0, green: 0.78, blue: 0.16, alpha: 1)
     private static let yellow = CGColor(red: 1, green: 0.92, blue: 0.23, alpha: 1)
 
@@ -207,7 +208,7 @@ public struct CaptionStyler: Sendable {
         let f = font(fontSize)
         let full = line(words.joined(separator: " "), font: f)
         let textW = bounds(full).width
-        let safeW = width * safeAreaFraction
+        let safeW = safeSingleLineTextWidth(width)
         // Center within safe area; if text exceeds safe area, start at margin
         let startX = textW <= safeW ? (width - textW) / 2 : (width - safeW) / 2
         var cx = startX
@@ -251,10 +252,11 @@ public struct CaptionStyler: Sendable {
 
     private static func renderWordHighlight(ctx: CGContext, words: [String], activeIndex: Int?,
                                             fontSize: CGFloat, width: CGFloat, textY: CGFloat, brandMode: Bool = false) {
+        let fontSize = fittedSingleLineFontSize(for: words, requestedSize: fontSize, width: width)
         let f = font(fontSize)
         let full = line(words.joined(separator: " "), font: f)
         let fb = bounds(full)
-        let safeW = width * safeAreaFraction
+        let safeW = safeSingleLineTextWidth(width)
         let startX = fb.width <= safeW ? (width - fb.width) / 2 : (width - safeW) / 2
         if !brandMode {
             pill(ctx, x: startX, y: textY, w: min(fb.width, safeW), h: fb.height)
@@ -263,6 +265,23 @@ public struct CaptionStyler: Sendable {
         drawWords(ctx: ctx, words: words, activeIndex: activeIndex, fontSize: fontSize,
                  width: width, textY: textY, activeColor: brandMode ? brandGreen : karaokeAccent, inactiveColor: brandMode ? white : dimWhite)
         ctx.setShadow(offset: .zero, blur: 0, color: nil)
+    }
+
+    private static func fittedSingleLineFontSize(for words: [String], requestedSize: CGFloat, width: CGFloat) -> CGFloat {
+        let text = words.joined(separator: " ")
+        guard !text.isEmpty else { return requestedSize }
+
+        let safeW = safeSingleLineTextWidth(width)
+        let measuredWidth = bounds(line(text, font: font(requestedSize))).width
+        guard measuredWidth > safeW, measuredWidth > 0 else { return requestedSize }
+
+        // Karaoke captions are intentionally a single stable line. Scale just
+        // enough to keep long phrases inside the horizontal safe area.
+        return requestedSize * (safeW / measuredWidth)
+    }
+
+    private static func safeSingleLineTextWidth(_ width: CGFloat) -> CGFloat {
+        max(1, width * safeAreaFraction - textShadowSafetyInset * 2)
     }
 
     private static func renderOutline(ctx: CGContext, text: String, fontSize: CGFloat, width: CGFloat, textY: CGFloat) {
